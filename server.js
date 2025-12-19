@@ -31,6 +31,7 @@ app.use("/api/tasks", require("./routes/taskRoutes"));
 app.use("/api/users", require("./routes/userRoutes"));
 app.use("/api/reports", require("./routes/reportRoutes"));
 app.use("/api/hr", require("./routes/hrApplicantRoutes"));
+app.use("/api/hr/gmail", require("./routes/hrGmailRoutes"));
 
 // Health check
 app.get("/", (req, res) => {
