@@ -139,7 +139,7 @@ const updateUser = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    const allowedFields = ["fullName", "email", "role", "avatar", "isActive"];
+    const allowedFields = ["fullName", "email", "avatar", "isActive"];
     const updateData = {};
     allowedFields.forEach((field) => {
       if (typeof req.body[field] !== "undefined") {
@@ -207,7 +207,7 @@ const deleteUser = async (req, res) => {
 // @access  Private/Admin
 const getTeamStats = async (req, res) => {
   try {
-    const users = await User.find({ role: "user" }).select("-password");
+    const users = await User.find().select("-password");
 
     const teamStats = await Promise.all(
       users.map(async (user) => {

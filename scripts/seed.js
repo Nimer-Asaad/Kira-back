@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 
 const connectDB = require("../config/db");
+const Admin = require("../models/Admin");
 const User = require("../models/User");
 const Task = require("../models/Task");
 
@@ -10,14 +11,13 @@ const seed = async () => {
   await connectDB();
 
   console.log("🔄 Clearing existing data...");
-  await Promise.all([User.deleteMany({}), Task.deleteMany({})]);
+  await Promise.all([Admin.deleteMany({}), User.deleteMany({}), Task.deleteMany({})]);
 
-  console.log("👤 Creating users...");
-  const admin = await User.create({
+  console.log("👤 Creating admin and users...");
+  const admin = await Admin.create({
     fullName: "Admin User",
     email: "admin@example.com",
     password: "password123",
-    role: "admin",
   });
 
   const users = await Promise.all([
@@ -25,19 +25,16 @@ const seed = async () => {
       fullName: "Alice Johnson",
       email: "alice@example.com",
       password: "password123",
-      role: "user",
     }),
     User.create({
       fullName: "Bob Smith",
       email: "bob@example.com",
       password: "password123",
-      role: "user",
     }),
     User.create({
       fullName: "Carol Lee",
       email: "carol@example.com",
       password: "password123",
-      role: "user",
     }),
   ]);
 
@@ -98,6 +95,28 @@ const seed = async () => {
     },
     {
       title: "Customer feedback review",
+      description: "Triaging feedback from last demo and create follow-ups",
+      priority: "high",
+      status: "pending",
+      dueDate: new Date(now + 3 * 24 * 60 * 60 * 1000),
+      assignedTo: [users[2]._id],
+      createdBy: admin._id,
+      checklist: [
+        { text: "Collect notes", done: false },
+        { text: "Create action items", done: false },
+      ],
+    },
+  ];
+
+  const createdTasks = await Task.insertMany(tasks);
+  
+  // Add tasks to admin's createdTasks array
+  await Admin.findByIdAndUpdate(admin._id, {
+    $set: { createdTasks: createdTasks.map((t) => t._id) },
+  });
+
+  console.log("✅ Seed data inserted.");
+};
       description: "Triaging feedback from last demo and create follow-ups",
       priority: "high",
       status: "pending",

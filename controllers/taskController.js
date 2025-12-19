@@ -1,4 +1,5 @@
 const Task = require("../models/Task");
+const Admin = require("../models/Admin");
 
 // Safely parse JSON strings coming from forms
 const parseMaybeJSON = (value) => {
@@ -31,6 +32,11 @@ const createTask = async (req, res) => {
       attachments,
     });
 
+    // Add task to admin's createdTasks array
+    await Admin.findByIdAndUpdate(req.user._id, {
+      $push: { createdTasks: task._id },
+    });
+
     const populated = await Task.findById(task._id)
       .populate("assignedTo", "fullName email avatar")
       .populate("createdBy", "fullName email");
@@ -48,7 +54,7 @@ const createTask = async (req, res) => {
 const getAdminTasks = async (req, res) => {
   try {
     const { status } = req.query;
-    const query = {};
+    const query = { createdBy: req.user._id };
 
     if (status && status !== "all") {
       query.status = status;
@@ -94,17 +100,29 @@ const getMyTasks = async (req, res) => {
   }
 };
 
+
 // @desc    Get task statistics (admin)
 // @route   GET /api/tasks/stats
 // @access  Private/Admin
 const getTaskStats = async (req, res) => {
   try {
-    const total = await Task.countDocuments();
-    const pending = await Task.countDocuments({ status: "pending" });
-    const inProgress = await Task.countDocuments({ status: "in-progress" });
-    const completed = await Task.countDocuments({ status: "completed" });
+    // Get stats only for tasks created by this admin
+    const total = await Task.countDocuments({ createdBy: req.user._id });
+    const pending = await Task.countDocuments({ 
+      createdBy: req.user._id, 
+      status: "pending" 
+    });
+    const inProgress = await Task.countDocuments({ 
+      createdBy: req.user._id, 
+      status: "in-progress" 
+    });
+    const completed = await Task.countDocuments({ 
+      createdBy: req.user._id, 
+      status: "completed" 
+    });
 
     const priorityAgg = await Task.aggregate([
+      { $match: { createdBy: req.user._id } },
       { $group: { _id: "$priority", count: { $sum: 1 } } },
     ]);
 
@@ -114,7 +132,7 @@ const getTaskStats = async (req, res) => {
       high: priorityAgg.find((p) => p._id === "high")?.count || 0,
     };
 
-    const recentTasks = await Task.find()
+    const recentTasks = await Task.find({ createdBy: req.user._id })
       .sort({ createdAt: -1 })
       .limit(5)
       .select("title status priority dueDate createdAt")
@@ -265,6 +283,16 @@ const deleteTask = async (req, res) => {
     if (!task) {
       return res.status(404).json({ message: "Task not found" });
     }
+
+    // Ensure admin can only delete their own tasks
+    if (task.createdBy.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "Not authorized to delete this task" });
+    }
+
+    // Remove task from admin's createdTasks
+    await Admin.findByIdAndUpdate(req.user._id, {
+      $pull: { createdTasks: task._id },
+    });
 
     await task.deleteOne();
     res.json({ message: "Task removed" });
