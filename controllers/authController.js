@@ -115,21 +115,23 @@ const loginUser = async (req, res) => {
 
     // Check for user first
     let user = await User.findOne({ email });
-    let isAdmin = false;
+    let role = null;
 
     // If not found in User collection, check Admin collection
     if (!user) {
       user = await Admin.findOne({ email });
       if (user) {
-        isAdmin = true;
+        role = "admin";
       }
+    } else {
+      // User found in User collection, use their role (user or hr)
+      role = user.role || "user";
     }
 
     if (!user || !(await user.comparePassword(password))) {
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
-    const role = isAdmin ? "admin" : "user";
     const token = generateToken(user._id, role);
 
     res.json({

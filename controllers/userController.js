@@ -249,6 +249,36 @@ const getTeamStats = async (req, res) => {
   }
 };
 
+// @desc    Update user role (promote to HR or demote to user)
+// @route   PATCH /api/users/:id/role
+// @access  Private/Admin
+const updateUserRole = async (req, res) => {
+  try {
+    const { role } = req.body;
+
+    // Validate role
+    if (!role || !["user", "hr"].includes(role)) {
+      return res.status(400).json({ message: "Role must be either 'user' or 'hr'" });
+    }
+
+    const user = await User.findById(req.params.id);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    user.role = role;
+    await user.save();
+
+    const updatedUser = await User.findById(req.params.id).select("-password");
+
+    res.json(updatedUser);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
 module.exports = {
   getUsers,
   getCurrentUser,
@@ -256,6 +286,7 @@ module.exports = {
   getUserById,
   getUserStats,
   updateUser,
+  updateUserRole,
   deleteUser,
   getTeamStats,
   uploadAvatar,

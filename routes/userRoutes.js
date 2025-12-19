@@ -7,6 +7,7 @@ const {
   getUserById,
   getUserStats,
   updateUser,
+  updateUserRole,
   deleteUser,
   getTeamStats,
   uploadAvatar,
@@ -26,6 +27,7 @@ router
   .get(protect, admin, getUserById)
   .put(protect, admin, updateUser)
   .delete(protect, admin, deleteUser);
+router.patch("/:id/role", protect, admin, updateUserRole);
 router.get("/:id/stats", protect, admin, getUserStats);
 
 module.exports = router;
