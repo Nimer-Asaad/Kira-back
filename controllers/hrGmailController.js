@@ -228,7 +228,10 @@ exports.generateEmailSummary = async (req, res) => {
       return res.status(404).json({ error: 'Email not found' });
     }
 
-    if (!email.body || email.body.trim().length === 0) {
+    // Use bodyText or bodyHtml or snippet as fallback
+    const emailBody = email.bodyText || email.bodyHtml || email.snippet || '';
+    
+    if (!emailBody || emailBody.trim().length === 0) {
       return res.status(400).json({ error: 'Email body is empty; cannot generate summary' });
     }
 
@@ -245,14 +248,29 @@ Urgency: Determine based on tone, keywords like "urgent", "ASAP", etc.
 Suggested stage: Guess the recruitment stage this email refers to. If unclear, use "unknown".
 Response MUST be valid JSON only, no markdown, no extra text.`;
 
-    const emailContent = `From: ${email.from}
-To: ${email.to.join(', ')}
+    const emailContent = `From: ${email.fromName || email.fromEmail}
+To: ${email.to?.join(', ') || 'N/A'}
 Subject: ${email.subject}
 Date: ${email.date}
 
-${email.body}`;
+${emailBody}`;
 
-    const summary = await getJsonFromText(systemPrompt, emailContent);
+    const summaryResponse = await getJsonFromText(systemPrompt, emailContent);
+    
+    // Parse the JSON response
+    let summary;
+    try {
+      summary = typeof summaryResponse === 'string' ? JSON.parse(summaryResponse) : summaryResponse;
+    } catch (parseError) {
+      console.error('Failed to parse AI summary:', parseError);
+      summary = {
+        summary: 'Failed to parse AI response',
+        key_points: [],
+        action_items: [],
+        urgency: 'unknown',
+        suggested_stage: 'unknown',
+      };
+    }
 
     email.aiSummary = {
       ...summary,

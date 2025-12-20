@@ -33,6 +33,19 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    // Gmail OAuth tokens
+    gmailAccessToken: {
+      type: String,
+      default: null,
+    },
+    gmailRefreshToken: {
+      type: String,
+      default: null,
+    },
+    gmailTokenExpiry: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,

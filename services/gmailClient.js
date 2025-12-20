@@ -13,7 +13,7 @@ const initializeGmailClient = () => {
   }
 
   try {
-    authClient = new google.auth.OAuth2(clientId, clientSecret, process.env.GOOGLE_REDIRECT_URI || 'http://localhost:5000/api/gmail/callback');
+    authClient = new google.auth.OAuth2(clientId, clientSecret, process.env.GOOGLE_REDIRECT_URI || 'http://localhost:8000/api/gmail/oauth2/callback');
     authClient.setCredentials({
       refresh_token: refreshToken,
     });

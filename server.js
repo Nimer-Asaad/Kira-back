@@ -32,6 +32,7 @@ app.use("/api/users", require("./routes/userRoutes"));
 app.use("/api/reports", require("./routes/reportRoutes"));
 app.use("/api/hr", require("./routes/hrApplicantRoutes"));
 app.use("/api/hr/gmail", require("./routes/hrGmailRoutes"));
+app.use("/api/gmail", require("./routes/gmailRoutes")); // Comprehensive Gmail routes
 
 // Health check
 app.get("/", (req, res) => {
