@@ -501,22 +501,43 @@ router.post('/emails/:id/attach-cv', protect, hrOrAdmin, async (req, res) => {
     }
 
     if (!email.hasAttachments || !email.attachments || email.attachments.length === 0) {
-      return res.status(404).json({ message: 'No attachments found on this email' });
+      return res.status(404).json({ message: 'No attachments found on this email', skipReason: 'noAttachment' });
     }
 
-    const pdfAttachment = email.attachments.find((a) => {
+    // Find PDF attachments with flexible mimeType detection
+    const pdfAttachments = email.attachments.filter((a) => {
       const name = (a.filename || '').toLowerCase();
       const mime = (a.mimeType || '').toLowerCase();
+      // Accept .pdf extension OR pdf-related mimeType
       return name.endsWith('.pdf') || mime.includes('pdf');
     });
 
-    if (!pdfAttachment) {
-      return res.status(404).json({ message: 'No PDF attachments found on this email' });
+    if (pdfAttachments.length === 0) {
+      return res.status(404).json({ message: 'No PDF attachments found on this email', skipReason: 'noPdf' });
     }
 
-    const buffer = await gmailService.getAttachmentForUser(req.user.id, email.gmailId, pdfAttachment.attachmentId);
+    // Pick best PDF using scoring (prefer PDF with CV-like filename/content)
+    let selectedPdf = pdfAttachments[0];
+    if (pdfAttachments.length > 1) {
+      selectedPdf = gmailService.pickBestPdfAttachment(
+        email.attachments,
+        email.subject,
+        email.snippet,
+        email.bodyText || ''
+      );
+      if (!selectedPdf) {
+        selectedPdf = pdfAttachments[0]; // Fallback to first PDF
+      }
+    }
 
-    const safeBase = (pdfAttachment.filename || 'cv.pdf').replace(/[^a-z0-9_.-]/gi, '_');
+    const buffer = await gmailService.getAttachmentForUser(req.user.id, email.gmailId, selectedPdf.attachmentId);
+
+    // Check minimum size (to avoid corrupted or placeholder PDFs)
+    if (buffer.length < 1024) { // Less than 1KB
+      return res.status(400).json({ message: 'PDF is too small (possibly corrupted)', skipReason: 'invalidPdf' });
+    }
+
+    const safeBase = (selectedPdf.filename || 'cv.pdf').replace(/[^a-z0-9_.-]/gi, '_');
     const finalName = `${Date.now()}-${safeBase.toLowerCase().endsWith('.pdf') ? safeBase : `${safeBase}.pdf`}`;
     const filePath = path.join(cvDir, finalName);
     fs.writeFileSync(filePath, buffer);
@@ -526,7 +547,7 @@ router.post('/emails/:id/attach-cv', protect, hrOrAdmin, async (req, res) => {
 
     const cv = {
       filename: finalName,
-      originalName: pdfAttachment.filename || 'cv.pdf',
+      originalName: selectedPdf.filename || 'cv.pdf',
       mimeType: 'application/pdf',
       size: buffer.length,
       url,
@@ -541,7 +562,35 @@ router.post('/emails/:id/attach-cv', protect, hrOrAdmin, async (req, res) => {
     res.json({ message: 'CV attached from Gmail', applicant: updated, cv });
   } catch (err) {
     console.error('attach-cv error:', err.message);
-    res.status(500).json({ message: err.message || 'Failed to attach CV from Gmail' });
+    res.status(500).json({ message: err.message || 'Failed to attach CV from Gmail', skipReason: 'error' });
+  }
+});
+
+// 10) Mark email as converted (update conversionStatus and applicantId)
+router.patch('/emails/:id/mark-converted', protect, hrOrAdmin, async (req, res) => {
+  try {
+    const emailId = req.params.id;
+    const { applicantId } = req.body;
+
+    if (!applicantId) {
+      return res.status(400).json({ message: 'applicantId is required' });
+    }
+
+    const email = await dbManager.getEmailById(emailId);
+    if (!email || email.userId.toString() !== req.user.id.toString()) {
+      return res.status(404).json({ message: 'Email not found' });
+    }
+
+    const updated = await dbManager.updateEmail(emailId, {
+      conversionStatus: 'converted',
+      applicantId,
+      conversionMarkedAt: new Date(),
+    });
+
+    res.json({ message: 'Email marked as converted', email: updated });
+  } catch (err) {
+    console.error('mark-converted error:', err.message);
+    res.status(500).json({ message: err.message || 'Failed to mark email as converted' });
   }
 });
 

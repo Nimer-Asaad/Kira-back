@@ -115,7 +115,7 @@ function extractAttachments(payload) {
       hasAttachments = true;
       attachments.push({
         filename: part.filename,
-        mimeType: part.mimeType,
+        mimeType: part.mimeType || 'application/octet-stream',
         size: part.body.size || 0,
         attachmentId: part.body.attachmentId,
       });
@@ -130,6 +130,75 @@ function extractAttachments(payload) {
   }
 
   return { hasAttachments, attachments };
+}
+
+// Score CV likelihood (0-1) based on filename, mimeType, subject, and body
+function scoreCvLikelihood(filename, mimeType, subject, snippet, bodyText) {
+  let score = 0.5; // Base score
+  
+  const fullText = `${subject || ''} ${snippet || ''} ${bodyText || ''}`.toLowerCase();
+  const filenameLower = (filename || '').toLowerCase();
+  
+  // Positive CV indicators
+  const cvKeywords = [
+    'cv', 'resume', 'résumé', 'curriculum vitae',
+    'application', 'job', 'position', 'candidate', 'hiring',
+    'attached', 'portfolio', 'experience', 'qualification'
+  ];
+  const cvMatches = cvKeywords.filter(kw => fullText.includes(kw)).length;
+  score += Math.min(cvMatches * 0.08, 0.25);
+  
+  // Negative indicators
+  const negativeKeywords = [
+    'assignment', 'homework', 'coursework', 'exam',
+    'invoice', 'receipt', 'payment', 'brochure', 'statement',
+    'promotion', 'newsletter', 'marketing'
+  ];
+  const negativeMatches = negativeKeywords.filter(kw => fullText.includes(kw)).length;
+  score -= negativeMatches * 0.15;
+  
+  // Filename indicators
+  if (filenameLower.includes('cv') || filenameLower.includes('resume') || filenameLower.includes('résum')) {
+    score += 0.2;
+  }
+  if (filenameLower.includes('invoice') || filenameLower.includes('receipt') || filenameLower.includes('statement')) {
+    score -= 0.25;
+  }
+  
+  // PDF is positive signal for CV
+  if (filenameLower.endsWith('.pdf')) {
+    score += 0.1;
+  }
+  
+  return Math.max(0, Math.min(1, score));
+}
+
+// Pick best PDF attachment for CV based on scoring
+function pickBestPdfAttachment(attachments, subject, snippet, bodyText) {
+  if (!attachments || attachments.length === 0) return null;
+  
+  const pdfs = attachments.filter(att => {
+    const name = (att.filename || '').toLowerCase();
+    const mime = (att.mimeType || '').toLowerCase();
+    return name.endsWith('.pdf') || mime.includes('pdf');
+  });
+  
+  if (pdfs.length === 0) return null;
+  if (pdfs.length === 1) return pdfs[0];
+  
+  // Score each PDF and pick the best
+  let bestPdf = pdfs[0];
+  let bestScore = scoreCvLikelihood(bestPdf.filename, bestPdf.mimeType, subject, snippet, bodyText);
+  
+  for (let i = 1; i < pdfs.length; i++) {
+    const score = scoreCvLikelihood(pdfs[i].filename, pdfs[i].mimeType, subject, snippet, bodyText);
+    if (score > bestScore) {
+      bestScore = score;
+      bestPdf = pdfs[i];
+    }
+  }
+  
+  return bestPdf;
 }
 
 // ===== Email Analysis =====
@@ -210,6 +279,8 @@ module.exports = {
   extractAttachments,
   scoreEmail,
   detectCV,
+  scoreCvLikelihood,
+  pickBestPdfAttachment,
   calculateGmailPriority,
   getGmailImportance,
   getGmailCategory,

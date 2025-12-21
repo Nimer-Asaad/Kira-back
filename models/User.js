@@ -26,7 +26,7 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["user", "hr"],
+      enum: ["user", "hr", "trainee"],
       default: "user",
     },
     isActive: {
@@ -46,6 +46,44 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // Employee profile for task assignment
+    specialization: {
+      type: String,
+      enum: ["Frontend", "Backend", "AI", "QA", "DevOps", "UI/UX", "General"],
+      default: "General",
+    },
+    skills: [
+      {
+        name: {
+          type: String,
+          required: true,
+        },
+        level: {
+          type: Number,
+          min: 1,
+          max: 5,
+          default: 3,
+        },
+      },
+    ],
+    maxConcurrentTasks: {
+      type: Number,
+      default: 5,
+    },
+    // Track assignment reasons for transparency
+    taskAssignmentNotes: [
+      {
+        taskId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Task",
+        },
+        reason: String,
+        assignedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
   },
   {
     timestamps: true,

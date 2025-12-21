@@ -18,19 +18,23 @@ const taskSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "in-progress", "completed"],
+      enum: ["pending", "in-progress", "submitted", "reviewed", "completed"],
       default: "pending",
     },
+    // Due date is optional/nullable (imported tasks may not have a date)
     dueDate: {
       type: Date,
-      required: [true, "Due date is required"],
+      default: null,
     },
-    assignedTo: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
-      },
-    ],
+    assignedTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    assignmentReason: {
+      type: String,
+      default: "",
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Admin",
@@ -54,6 +58,100 @@ const taskSchema = new mongoose.Schema(
         name: String,
       },
     ],
+    // Training pipeline support
+    type: {
+      type: String,
+      enum: ["training", "real"],
+      default: "real",
+    },
+    ownerType: {
+      type: String,
+      enum: ["trainee", "employee"],
+      default: "employee",
+    },
+    ownerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
+    maxPoints: {
+      type: Number,
+      default: null,
+    },
+    earnedPoints: {
+      type: Number,
+      default: 0,
+    },
+    source: {
+      type: String,
+      enum: ["ai", "pdf", "manual"],
+      default: "manual",
+    },
+    // Optional legacy rubric text (kept for compatibility)
+    rubric: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    // New explicit training task fields
+    requirements: [{ type: String }],
+    rubricItems: [
+      {
+        criterion: { type: String, required: true },
+        maxPoints: { type: Number, default: 0 },
+        keywords: [{ type: String }],
+      },
+    ],
+    evaluationNotes: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    dueAt: {
+      type: Date,
+      default: null,
+    },
+    submittedAt: {
+      type: Date,
+      default: null,
+    },
+    scoringBreakdown: {
+      basePoints: { type: Number, default: 0 },
+      earlyBonus: { type: Number, default: 0 },
+      lateMinutes: { type: Number, default: 0 },
+      latePenalty: { type: Number, default: 0 },
+    },
+    submission: {
+      repoUrl: { type: String, default: "" },
+      codeSnippet: { type: String, default: "" },
+      notes: { type: String, default: "" },
+      attachments: [
+        {
+          url: String,
+          filename: String,
+        },
+      ],
+      submittedAt: { type: Date, default: null },
+    },
+    aiEvaluation: {
+      score: { type: Number, default: 0 },
+      maxScore: { type: Number, default: 0 },
+      percent: { type: Number, default: 0 },
+      pass: { type: Boolean, default: false },
+      breakdown: [
+        {
+          criterion: String,
+          score: Number,
+          maxPoints: Number,
+          reasoning: String,
+        },
+      ],
+      strengths: [{ type: String }],
+      issues: [{ type: String }],
+      suggestions: [{ type: String }],
+      shortFeedback: { type: String, default: "" },
+      evaluatedAt: { type: Date, default: null },
+      model: { type: String, default: "" },
+    },
   },
   {
     timestamps: true,

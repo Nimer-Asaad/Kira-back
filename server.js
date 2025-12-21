@@ -31,8 +31,12 @@ app.use("/api/tasks", require("./routes/taskRoutes"));
 app.use("/api/users", require("./routes/userRoutes"));
 app.use("/api/reports", require("./routes/reportRoutes"));
 app.use("/api/hr", require("./routes/hrApplicantRoutes"));
+app.use("/api/hr", require("./routes/traineeRoutes"));
+app.use("/api/hr/trainees", require("./routes/traineeLifecycleRoutes"));
+app.use("/api/trainee", require("./routes/traineePortalRoutes"));
 app.use("/api/hr/gmail", require("./routes/hrGmailRoutes"));
 app.use("/api/gmail", require("./routes/gmailRoutes")); // Comprehensive Gmail routes
+app.use("/api/chat", require("./routes/chatRoutes")); // Chat routes
 
 // Health check
 app.get("/", (req, res) => {

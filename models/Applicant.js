@@ -32,7 +32,7 @@ const applicantSchema = new mongoose.Schema(
     },
     stage: {
       type: String,
-      enum: ["Applied", "Screening", "Interview", "Offer", "Hired", "Rejected"],
+      enum: ["Applied", "Screening", "Interview", "Offer", "Accepted", "Hired", "Rejected"],
       default: "Applied",
     },
     notes: {
@@ -49,6 +49,11 @@ const applicantSchema = new mongoose.Schema(
       type: String,
       required: false,
       trim: true,
+    },
+    traineeId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Trainee",
+      default: null,
     },
   },
   { timestamps: true }

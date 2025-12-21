@@ -1,5 +1,8 @@
 const Task = require("../models/Task");
 const Admin = require("../models/Admin");
+const User = require("../models/User");
+const { parsePdfTasks, normalizeTitle } = require("../services/pdfParsingService");
+const { autoDistributeTasks } = require("../services/taskDistributionService");
 
 // Safely parse JSON strings coming from forms
 const parseMaybeJSON = (value) => {
@@ -30,6 +33,7 @@ const createTask = async (req, res) => {
       createdBy: req.user._id,
       checklist,
       attachments,
+      ownerType: body.ownerType || "employee",
     });
 
     // Add task to admin's createdTasks array
@@ -53,11 +57,15 @@ const createTask = async (req, res) => {
 // @access  Private/Admin
 const getAdminTasks = async (req, res) => {
   try {
-    const { status } = req.query;
+    const { status, ownerType } = req.query;
     const query = { createdBy: req.user._id };
 
     if (status && status !== "all") {
       query.status = status;
+    }
+
+    if (ownerType && ["employee", "trainee"].includes(ownerType)) {
+      query.ownerType = ownerType;
     }
 
     const tasks = await Task.find(query)
@@ -77,7 +85,7 @@ const getAdminTasks = async (req, res) => {
 // @access  Private (user)
 const getMyTasks = async (req, res) => {
   try {
-    if (req.user.role !== "user") {
+    if (req.user.role !== "user" && req.user.role !== "trainee") {
       return res.status(403).json({ message: "Only users can view their tasks" });
     }
 
@@ -207,9 +215,8 @@ const updateTaskStatus = async (req, res) => {
     const task = await Task.findById(req.params.id);
     if (!task) return res.status(404).json({ message: "Task not found" });
 
-    const isAssigned = task.assignedTo.some(
-      (u) => u.toString() === req.user._id.toString()
-    );
+    const isAssigned =
+      task.assignedTo && task.assignedTo.toString() === req.user._id.toString();
 
     if (req.user.role !== "admin" && !isAssigned) {
       return res.status(403).json({ message: "Not authorized to update this task" });
@@ -237,9 +244,8 @@ const updateChecklistItem = async (req, res) => {
     const task = await Task.findById(req.params.id);
     if (!task) return res.status(404).json({ message: "Task not found" });
 
-    const isAssigned = task.assignedTo.some(
-      (u) => u.toString() === req.user._id.toString()
-    );
+    const isAssigned =
+      task.assignedTo && task.assignedTo.toString() === req.user._id.toString();
     if (req.user.role !== "admin" && !isAssigned) {
       return res.status(403).json({ message: "Not authorized to update this task" });
     }
@@ -315,9 +321,8 @@ const getTaskById = async (req, res) => {
       return res.status(404).json({ message: "Task not found" });
     }
 
-    const isAssigned = task.assignedTo.some(
-      (u) => u._id.toString() === req.user._id.toString()
-    );
+    const isAssigned =
+      task.assignedTo && task.assignedTo._id && task.assignedTo._id.toString() === req.user._id.toString();
 
     if (req.user.role !== "admin" && !isAssigned) {
       return res.status(403).json({ message: "Not authorized to view this task" });
@@ -327,6 +332,211 @@ const getTaskById = async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// @desc    Import tasks from PDF
+// @route   POST /api/tasks/import/pdf
+// @access  Private
+const importTasksFromPDF = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "No PDF file provided" });
+    }
+
+    // Check if file is PDF
+    if (
+      req.file.mimetype !== "application/pdf" &&
+      !req.file.originalname.endsWith(".pdf")
+    ) {
+      return res.status(400).json({ message: "File must be a PDF" });
+    }
+
+    // Prefer LLM extraction when OpenAI is configured, otherwise rule-based
+    const useOpenAI = !!process.env.OPENAI_API_KEY;
+    const result = await parsePdfTasks(req.file.buffer, useOpenAI);
+
+    // Use ONLY validated tasks returned by parsePdfTasks()
+    const { tasks: parsedTasks, errors, fixes } = result;
+
+    // If nothing valid extracted, return 400 with details
+    if (!parsedTasks || parsedTasks.length === 0) {
+      return res.status(400).json({
+        message: "No valid tasks extracted from PDF",
+        errors,
+      });
+    }
+
+    // Build de-duplication key set for existing tasks
+    const userId = req.user._id.toString();
+    const toDateOnly = (d) => (d ? new Date(d).toISOString().slice(0, 10) : null);
+
+    const parsedTitles = parsedTasks.map((t) => normalizeTitle(t.title)).filter(Boolean);
+    const parsedDueDates = parsedTasks
+      .map((t) => (t.dueDate ? toDateOnly(t.dueDate) : null))
+      .filter(Boolean);
+    const hasNullDue = parsedTasks.some((t) => !t.dueDate);
+
+    const existingQuery = { createdBy: req.user._id };
+    const orConds = [];
+    if (parsedTitles.length) orConds.push({ title: { $in: parsedTitles } });
+    if (parsedDueDates.length) orConds.push({ dueDate: { $in: parsedDueDates.map((d) => new Date(d)) } });
+    if (hasNullDue) orConds.push({ dueDate: null });
+    if (orConds.length) existingQuery.$or = orConds;
+
+    const existing = await Task.find(existingQuery).select("title dueDate createdBy");
+    console.log("[PDF Import] Existing tasks fetched:", existing.length);
+    const existingKeySet = new Set(
+      existing.map((doc) => {
+        const titleKey = normalizeTitle(doc.title);
+        const dueKey = doc.dueDate ? new Date(doc.dueDate).toISOString().slice(0, 10) : "null";
+        return `${userId}|${titleKey}|${dueKey}`;
+      })
+    );
+
+    // Build assignTo mapping cache (optional)
+    const assignStrings = Array.from(new Set(parsedTasks.map(t => (t.assignTo || '').trim()).filter(Boolean)));
+    const assignMap = {};
+    if (assignStrings.length) {
+      // Match by email first
+      const byEmail = await User.find({ email: { $in: assignStrings.map(s => s.toLowerCase()) } }).select('_id email fullName');
+      byEmail.forEach(u => { assignMap[u.email.toLowerCase()] = u._id; });
+      // Then match by exact fullName for remaining
+      const remainingNames = assignStrings.filter(s => !assignMap[s.toLowerCase()]);
+      if (remainingNames.length) {
+        const byName = await User.find({ fullName: { $in: remainingNames } }).select('_id fullName email');
+        byName.forEach(u => { assignMap[u.fullName] = u._id; });
+      }
+    }
+
+    // Prepare tasks for database insert with duplicate skipping
+    const skipped = [];
+    const tasksToInsert = [];
+
+    parsedTasks.forEach((task, index) => {
+      const titleKey = normalizeTitle(task.title);
+      const dueKey = task.dueDate ? toDateOnly(task.dueDate) : "null";
+      const key = `${userId}|${titleKey}|${dueKey}`;
+      if (existingKeySet.has(key)) {
+        skipped.push({ index, title: task.title, reason: "duplicate" });
+        return; // skip duplicates
+      }
+      existingKeySet.add(key); // prevent duplicates within same PDF
+
+      const assignedTo = (() => {
+        if (task.assignTo) {
+          const keyEmail = (task.assignTo || '').toLowerCase();
+          if (assignMap[keyEmail]) return assignMap[keyEmail];
+          if (assignMap[task.assignTo]) return assignMap[task.assignTo];
+        }
+        return null;
+      })();
+
+      const requestedAssignee = task.assignTo ? `Requested assignee: ${task.assignTo}` : "";
+
+      // Normalize checklist entries to object form { text, done }
+      const checklist = Array.isArray(task.checklist)
+        ? task.checklist
+            .map((item) => {
+              if (typeof item === "string") {
+                const text = item.trim();
+                return text ? { text, done: false } : null;
+              }
+              if (item && typeof item === "object") {
+                const text = String(item.text || "").trim();
+                const done = !!item.done;
+                return text ? { text, done } : null;
+              }
+              return null;
+            })
+            .filter(Boolean)
+        : [];
+
+      tasksToInsert.push({
+        ...task,
+        priority: (task.priority || "medium").toLowerCase(),
+        status: "pending",
+        createdBy: req.user._id,
+        source: "pdf",
+        dueDate: task.dueDate ? new Date(task.dueDate) : null,
+        checklist,
+        ownerType: "employee",
+        assignedTo,
+        assignmentReason: assignedTo ? requestedAssignee : requestedAssignee || "",
+      });
+    });
+
+    // Bulk insert
+    let createdTasks = [];
+    if (tasksToInsert.length > 0) {
+      // Debug: verify checklist object format before saving
+      console.log(
+        "[PDF Import][debug] checklist first item",
+        tasksToInsert[0]?.checklist?.[0],
+        typeof tasksToInsert[0]?.checklist?.[0]
+      );
+
+      const inserted = await Task.insertMany(tasksToInsert);
+      console.log("[PDF Import] Inserted tasks:", inserted.length);
+
+      // Update admin's createdTasks array
+      await Admin.findByIdAndUpdate(req.user._id, {
+        $push: { createdTasks: { $each: inserted.map((t) => t._id) } },
+      });
+
+      // Populate for response
+      createdTasks = await Task.find({
+        _id: { $in: inserted.map((t) => t._id) },
+      })
+        .populate("assignedTo", "fullName email avatar")
+        .populate("createdBy", "fullName email");
+    }
+
+    res.status(201).json({
+      message: "PDF import completed",
+      createdCount: createdTasks.length,
+      skippedCount: skipped.length,
+      fixedCount: fixes?.length || 0,
+      skipped,
+      errors,
+      fixes: fixes || [],
+      createdTasks: createdTasks.map((t) => ({
+        _id: t._id,
+        title: t.title,
+        priority: t.priority,
+        dueDate: t.dueDate,
+      })),
+    });
+  } catch (error) {
+    console.error("PDF import error:", error);
+    res.status(500).json({ message: "PDF import failed", error: error.message });
+  }
+};
+
+// @desc    Auto-distribute tasks to employees
+// @route   POST /api/tasks/auto-distribute
+// @access  Private
+const distributeTasksAuto = async (req, res) => {
+  try {
+    const { status } = req.body;
+
+    // Only allow admins or task creators to distribute
+    const filter = status ? { status } : {};
+
+    const result = await autoDistributeTasks(req.user._id, filter);
+
+    res.json({
+      message: "Auto-distribution completed",
+      ...result,
+    });
+  } catch (error) {
+    console.error("Auto-distribution error:", error);
+    res
+      .status(500)
+      .json({
+        message: "Auto-distribution failed",
+        error: error.message,
+      });
   }
 };
 
@@ -340,4 +550,6 @@ module.exports = {
   updateChecklistItem,
   deleteTask,
   getTaskById,
+  importTasksFromPDF,
+  distributeTasksAuto,
 };

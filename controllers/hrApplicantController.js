@@ -1,11 +1,12 @@
 const Applicant = require("../models/Applicant");
+const Email = require("../models/Email");
 const path = require("path");
 const fs = require("fs");
 const pdfParse = require("pdf-parse");
 const { PDFDocument } = require("pdf-lib");
 const { getJsonFromText } = require("../services/openaiClient");
 
-const allowedStages = ["Applied", "Screening", "Interview", "Offer", "Hired", "Rejected"];
+const allowedStages = ["Applied", "Screening", "Interview", "Offer", "Accepted", "Hired", "Rejected"];
 
 // GET /api/hr/applicants
 const listApplicants = async (req, res) => {
@@ -39,6 +40,18 @@ const createApplicant = async (req, res) => {
 
     if (stage && !allowedStages.includes(stage)) {
       return res.status(400).json({ message: "Invalid stage" });
+    }
+
+    // Deduplicate by email: if exists, revive/update instead of erroring
+    const existing = await Applicant.findOne({ email: email.toLowerCase() });
+    if (existing) {
+      existing.fullName = fullName;
+      existing.position = position || existing.position || "";
+      existing.notes = notes || existing.notes || "";
+      // If caller passed a stage, apply it, otherwise default to Applied when reviving
+      existing.stage = stage && allowedStages.includes(stage) ? stage : (existing.stage || "Applied");
+      await existing.save();
+      return res.status(200).json(existing);
     }
 
     const applicant = await Applicant.create({
@@ -110,7 +123,33 @@ const deleteApplicant = async (req, res) => {
     if (!applicant) {
       return res.status(404).json({ message: "Applicant not found" });
     }
-    res.json({ message: "Applicant deleted" });
+    // Soft-mark related Gmail emails for visibility
+    try {
+      if (applicant.email) {
+        // Mark the most recent email from this sender
+        const recentEmail = await Email.findOne({
+          userId: req.user._id,
+          fromEmail: new RegExp(`^${applicant.email}$`, 'i'),
+        }).sort({ date: -1 });
+
+        if (recentEmail) {
+          recentEmail.conversionStatus = 'deleted-applicant';
+          recentEmail.applicantId = null;
+          recentEmail.conversionMarkedAt = new Date();
+          await recentEmail.save();
+        }
+
+        // Optionally mark all CV-tagged emails from this sender (non-blocking)
+        await Email.updateMany(
+          { userId: req.user._id, fromEmail: new RegExp(`^${applicant.email}$`, 'i'), isCV: true },
+          { $set: { conversionStatus: 'deleted-applicant', applicantId: null, conversionMarkedAt: new Date() } }
+        );
+      }
+    } catch (markErr) {
+      console.warn('Failed to mark Gmail emails after applicant deletion:', markErr?.message || markErr);
+    }
+
+    res.json({ message: "Applicant deleted", markedGmail: true });
   } catch (error) {
     console.error("Error deleting applicant", error);
     res.status(500).json({ message: "Server error" });

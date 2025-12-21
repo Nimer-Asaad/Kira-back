@@ -108,6 +108,23 @@ const emailSchema = new mongoose.Schema(
       default: false,
       index: true,
     },
+    // Conversion tracking between Gmail and Applicant records
+    conversionStatus: {
+      type: String,
+      enum: ['none', 'converted', 'not-converted', 'blocked', 'deleted-applicant'],
+      default: 'none',
+      index: true,
+    },
+    applicantId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Applicant',
+      default: null,
+      index: true,
+    },
+    conversionMarkedAt: {
+      type: Date,
+      default: null,
+    },
     cvData: {
       candidateName: String,
       skills: [String],
