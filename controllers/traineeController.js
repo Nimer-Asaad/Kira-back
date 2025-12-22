@@ -335,19 +335,101 @@ async function createFromApplicant(req, res) {
 
 // Helper: build system prompt for AI tasks
 function buildTaskPrompt(position, skills) {
-  return `You are HR assistant. Generate STRICT JSON ONLY in the following shape:\n{
-    "tasks": [
-      {
-        "title": "string",
-        "description": "string",
-        "difficulty": "easy|medium|hard",
-        "requirements": ["explicit checklist item"],
-        "rubric": [ { "criterion": "string", "maxPoints": number, "keywords": ["optional"] } ],
-        "maxPoints": number,
-        "dueDays": 7
+  return `You are an HR training program designer. Generate a training task list for a trainee.
+
+**Specialization**: ${position}
+**Skills**: ${skills.join(", ")}
+
+**CRITICAL REQUIREMENTS**:
+1. Generate EXACTLY 5-8 tasks
+2. TOTAL SUM of points across ALL tasks MUST be EXACTLY 100 points
+3. Tasks MUST be specifically tailored to the "${position}" role
+4. Tasks MUST incorporate the provided skills
+
+**Point Distribution Guidelines**:
+- Easy tasks: 5-10 points each
+- Medium tasks: 10-20 points each  
+- Hard tasks: 20-30 points each
+- Ensure the sum equals EXACTLY 100
+
+**Output Format** - Return ONLY valid JSON in this exact structure:
+{
+  "tasks": [
+    {
+      "title": "Task title specific to ${position}",
+      "description": "Detailed description with clear objectives",
+      "difficulty": "easy|medium|hard",
+      "requirements": ["Specific deliverable 1", "Specific deliverable 2"],
+      "rubric": [
+        {
+          "criterion": "Evaluation criterion",
+          "maxPoints": 5,
+          "keywords": ["keyword1", "keyword2"]
+        }
+      ],
+      "maxPoints": 15,
+      "dueDays": 7
+    }
+  ]
+}
+
+**Validation Rules**:
+- Each task's maxPoints MUST equal the sum of its rubric items' maxPoints
+- The sum of ALL tasks' maxPoints MUST equal EXACTLY 100
+- All tasks must be relevant to ${position} specialization
+- Return ONLY the JSON object, no additional text`;
+}
+
+// Normalize tasks: ensure non-negative points, rubric consistency, and total points = 100
+function sanitizeGeneratedTasks(tasks) {
+  const list = Array.isArray(tasks) ? tasks.map((t) => ({ ...t })) : [];
+  if (!list.length) return [];
+
+  for (const t of list) {
+    // normalize difficulty
+    const d = (t.difficulty || 'medium').toLowerCase();
+    t.difficulty = ['easy','medium','hard'].includes(d) ? d : 'medium';
+
+    // normalize maxPoints
+    let mp = Number(t.maxPoints);
+    if (!Number.isFinite(mp)) mp = 0;
+    if (mp < 0) mp = 0;
+
+    // normalize rubric and sync sum to maxPoints
+    if (Array.isArray(t.rubric) && t.rubric.length) {
+      t.rubric = t.rubric.map((r) => ({
+        criterion: r?.criterion ? String(r.criterion) : 'Quality and completeness',
+        maxPoints: Math.max(0, Number(r?.maxPoints) || 0),
+        keywords: Array.isArray(r?.keywords) ? r.keywords : []
+      }));
+      const sum = t.rubric.reduce((s, r) => s + (Number(r.maxPoints) || 0), 0);
+      if (sum !== mp) {
+        const delta = mp - sum;
+        t.rubric[t.rubric.length - 1].maxPoints = Math.max(0, (Number(t.rubric[t.rubric.length - 1].maxPoints) || 0) + delta);
       }
-    ]
-  }\nRules:\n- Ensure maxPoints equals the sum of rubric maxPoints.\n- Prefer 5-8 tasks for position "${position}" using skills: ${skills.join(", ")}.`;
+    } else {
+      t.rubric = [{ criterion: 'Quality and completeness', maxPoints: mp, keywords: [] }];
+    }
+
+    t.maxPoints = mp;
+    if (!Array.isArray(t.requirements)) t.requirements = [];
+    if (typeof t.dueDays === 'undefined') t.dueDays = 7;
+  }
+
+  // enforce total = 100 by adjusting last task
+  const total = list.reduce((s, t) => s + (Number(t.maxPoints) || 0), 0);
+  const delta = 100 - total;
+  if (delta !== 0) {
+    const last = list[list.length - 1];
+    last.maxPoints = Math.max(0, (Number(last.maxPoints) || 0) + delta);
+    if (Array.isArray(last.rubric) && last.rubric.length) {
+      last.rubric[last.rubric.length - 1].maxPoints = Math.max(0, (Number(last.rubric[last.rubric.length - 1].maxPoints) || 0) + delta);
+    } else {
+      last.rubric = [{ criterion: 'Quality and completeness', maxPoints: last.maxPoints, keywords: [] }];
+    }
+  }
+
+  return list;
 }
 
 // POST /api/hr/trainees/:traineeId/generate-tasks (AI or PDF)
@@ -382,6 +464,10 @@ async function generateTasks(req, res) {
       } catch (e) {
         return res.status(400).json({ message: "Invalid AI JSON response" });
       }
+
+      // Sanitize generated tasks to guarantee valid points and total=100
+      const aiTasks = Array.isArray(tasksPayload?.tasks) ? tasksPayload.tasks : [];
+      tasksPayload = { tasks: sanitizeGeneratedTasks(aiTasks) };
     } else if (mode === "pdf") {
       if (!req.file) return res.status(400).json({ message: "No PDF uploaded" });
       const pdfPath = path.join(__dirname, "..", "uploads", "training", req.file.filename);
@@ -397,7 +483,7 @@ async function generateTasks(req, res) {
           tasks.push({ title: m[1], description: m[2], difficulty: "medium", maxPoints: 10, tags: [], dueDays: 7 });
         }
       }
-      tasksPayload = { tasks };
+      tasksPayload = { tasks: sanitizeGeneratedTasks(tasks) };
     } else {
       return res.status(400).json({ message: "Invalid mode" });
     }
@@ -408,7 +494,7 @@ async function generateTasks(req, res) {
     // Prepare docs to insert
     const docs = tasks.map((t) => {
       const dueDate = new Date(Date.now() + (Number(t.dueDays) || 7) * 24 * 60 * 60 * 1000);
-      const maxPoints = Number(t.maxPoints) || 10;
+      const maxPoints = Math.max(0, Number(t.maxPoints) || 0);
       return {
         title: t.title,
         description: t.description,
