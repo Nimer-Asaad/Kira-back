@@ -37,6 +37,7 @@ app.use("/api/trainee", require("./routes/traineePortalRoutes"));
 app.use("/api/hr/gmail", require("./routes/hrGmailRoutes"));
 app.use("/api/gmail", require("./routes/gmailRoutes")); // Comprehensive Gmail routes
 app.use("/api/personal", require("./routes/personalGmailRoutes")); // Personal Gmail routes
+app.use("/api/personal", require("./routes/personalTaskRoutes")); // Personal Task routes
 
 app.use("/api/assistant", require("./routes/assistantRoutes"));
 app.use("/api/chat", require("./routes/chatRoutes")); // Chat routes

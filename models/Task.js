@@ -43,7 +43,8 @@ const taskSchema = new mongoose.Schema(
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Admin",
-      required: true,
+      required: false, // Optional for personal tasks
+      default: null,
     },
     checklist: [
       {
@@ -77,6 +78,17 @@ const taskSchema = new mongoose.Schema(
     ownerId: {
       type: mongoose.Schema.Types.ObjectId,
       default: null,
+    },
+    // Personal mode: owner user ID
+    ownerUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    workspaceMode: {
+      type: String,
+      enum: ["company", "personal"],
+      default: "company",
     },
     maxPoints: {
       type: Number,
