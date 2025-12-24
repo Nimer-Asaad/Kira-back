@@ -36,6 +36,9 @@ app.use("/api/hr/trainees", require("./routes/traineeLifecycleRoutes"));
 app.use("/api/trainee", require("./routes/traineePortalRoutes"));
 app.use("/api/hr/gmail", require("./routes/hrGmailRoutes"));
 app.use("/api/gmail", require("./routes/gmailRoutes")); // Comprehensive Gmail routes
+app.use("/api/personal", require("./routes/personalGmailRoutes")); // Personal Gmail routes
+
+app.use("/api/assistant", require("./routes/assistantRoutes"));
 app.use("/api/chat", require("./routes/chatRoutes")); // Chat routes
 
 // Health check
@@ -50,7 +53,7 @@ app.use((err, req, res, next) => {
 });
 
 // Start Server
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8000;
 app.listen(PORT, () =>
   console.log(`Server running on port ${PORT}`)
 );

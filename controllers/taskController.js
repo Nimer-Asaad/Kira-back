@@ -23,17 +23,27 @@ const createTask = async (req, res) => {
     const checklist = parseMaybeJSON(body.checklist) || [];
     const attachments = parseMaybeJSON(body.attachments) || [];
 
+    // Fix: Handle assignedTo as array or single value
+    let assignedToValue = body.assignedTo;
+    if (Array.isArray(assignedToValue)) {
+      assignedToValue = assignedToValue.length > 0 ? assignedToValue[0] : null;
+    }
+    if (assignedToValue === "" || assignedToValue === undefined) {
+      assignedToValue = null;
+    }
+
     const task = await Task.create({
       title: body.title,
       description: body.description,
       priority: body.priority,
       status: body.status || "pending",
       dueDate: body.dueDate,
-      assignedTo: body.assignedTo,
+      assignedTo: assignedToValue,
       createdBy: req.user._id,
       checklist,
       attachments,
       ownerType: body.ownerType || "employee",
+      requiredAssigneesCount: Math.max(1, Number(body.requiredAssigneesCount) || 1),
     });
 
     // Add task to admin's createdTasks array
@@ -171,14 +181,27 @@ const updateTask = async (req, res) => {
     const checklist = parseMaybeJSON(body.checklist);
     const attachments = parseMaybeJSON(body.attachments);
 
+    // Fix: Handle assignedTo as array or single value
+    let assignedToValue = body.assignedTo;
+    if (Array.isArray(assignedToValue)) {
+      assignedToValue = assignedToValue.length > 0 ? assignedToValue[0] : null;
+    }
+    if (assignedToValue === "" || assignedToValue === undefined) {
+      assignedToValue = null;
+    }
+
     const updateData = {
       title: body.title,
       description: body.description,
       priority: body.priority,
       status: body.status,
       dueDate: body.dueDate,
-      assignedTo: body.assignedTo,
+      assignedTo: assignedToValue,
     };
+
+    if (body.requiredAssigneesCount !== undefined) {
+      updateData.requiredAssigneesCount = Math.max(1, Number(body.requiredAssigneesCount) || 1);
+    }
 
     if (Array.isArray(checklist)) updateData.checklist = checklist;
     if (Array.isArray(attachments)) updateData.attachments = attachments;

@@ -1,6 +1,69 @@
 const User = require("../models/User");
 const Task = require("../models/Task");
 
+// @desc    Create new user (Admin only)
+// @route   POST /api/users
+// @access  Private/Admin
+const createUser = async (req, res) => {
+  try {
+    const { fullName, email, password, role, isActive, phone, department, position } = req.body;
+
+    // Validation
+    if (!fullName || !email) {
+      return res.status(400).json({ message: "Full name and email are required" });
+    }
+
+    // Check if email already exists
+    const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
+    if (existingUser) {
+      return res.status(400).json({ message: "Email already in use" });
+    }
+
+    // Validate role
+    const validRoles = ["user", "hr", "trainee"];
+    const userRole = validRoles.includes(role) ? role : "user";
+
+    // Create user (password will be hashed by pre-save hook)
+    const userData = {
+      fullName: fullName.trim(),
+      email: email.toLowerCase().trim(),
+      role: userRole,
+      isActive: isActive !== undefined ? isActive : true,
+    };
+
+    // Add optional fields
+    if (password && password.length >= 6) {
+      userData.password = password;
+    } else if (password) {
+      return res.status(400).json({ message: "Password must be at least 6 characters" });
+    } else {
+      // Generate a random password if not provided (user will need to reset)
+      userData.password = Math.random().toString(36).slice(-12) + Math.random().toString(36).slice(-12);
+    }
+
+    if (phone) userData.phone = phone.trim();
+    if (department) userData.department = department.trim();
+    if (position) userData.position = position.trim();
+
+    const user = await User.create(userData);
+
+    // Return user without password
+    const userResponse = user.toObject();
+    delete userResponse.password;
+
+    res.status(201).json({
+      message: "User created successfully",
+      user: userResponse,
+    });
+  } catch (error) {
+    console.error("Error creating user:", error);
+    if (error.code === 11000) {
+      return res.status(400).json({ message: "Email already in use" });
+    }
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
 // @desc    Get all users
 // @route   GET /api/users
 // @access  Private/Admin
@@ -33,7 +96,7 @@ const getCurrentUser = async (req, res) => {
 // @access  Private
 const updateCurrentUser = async (req, res) => {
   try {
-    const allowedFields = ["fullName", "email", "avatar"];
+    const allowedFields = ["fullName", "email", "avatar", "phone", "department", "position", "bio"];
     const updateData = {};
 
     allowedFields.forEach((field) => {
@@ -280,6 +343,7 @@ const updateUserRole = async (req, res) => {
 };
 
 module.exports = {
+  createUser,
   getUsers,
   getCurrentUser,
   updateCurrentUser,

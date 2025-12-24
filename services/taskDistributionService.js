@@ -127,6 +127,7 @@ const getSkillMatches = (employee, requiredSpecialization, title, description) =
 
 /**
  * Calculate assignment score for an employee
+ * Improved: Better workload weighting (fewer tasks = higher chance)
  */
 const calculateAssignmentScore = async (employee, task, requiredSpec) => {
   let score = 0;
@@ -147,19 +148,32 @@ const calculateAssignmentScore = async (employee, task, requiredSpec) => {
   );
   score += skillMatch.totalSkillPoints;
 
-  // Workload penalty: -12 per active task
+  // Improved workload weighting: fewer active tasks = higher chance
   const activeCount = await getActiveTaskCount(employee._id);
-  score -= activeCount * 12;
+  
+  // Workload bonus: +5 points per available slot (maxConcurrentTasks - activeCount)
+  const maxConcurrent = employee.maxConcurrentTasks || 10; // Default to 10 if not set
+  const availableSlots = Math.max(0, maxConcurrent - activeCount);
+  score += availableSlots * 5; // Bonus for having capacity
+  
+  // Workload penalty: -8 per active task (reduced from -12 to be less harsh)
+  score -= activeCount * 8;
 
-  // Heavy overload penalty
-  if (activeCount >= employee.maxConcurrentTasks) {
+  // Heavy overload penalty (only if at or over limit)
+  if (activeCount >= maxConcurrent) {
     score -= 100;
+  }
+
+  // Inactive user penalty
+  if (!employee.isActive) {
+    score -= 200;
   }
 
   return {
     score,
     activeCount,
     skillMatches: skillMatch.matchedSkills,
+    availableSlots,
   };
 };
 
@@ -206,10 +220,14 @@ const autoDistributeTasks = async (userId, taskFilter = {}) => {
     for (const task of unassignedTasks) {
       // Determine required specialization
       const requiredSpec = determineRequiredSpecialization(task.title, task.description);
+      const requiredCount = task.requiredAssigneesCount || 1;
 
       // Score all employees
       const scores = [];
       for (const employee of employees) {
+        // Skip inactive employees
+        if (!employee.isActive) continue;
+        
         const scoreData = await calculateAssignmentScore(employee, task, requiredSpec);
         scores.push({
           employee,
@@ -217,49 +235,68 @@ const autoDistributeTasks = async (userId, taskFilter = {}) => {
         });
       }
 
-      // Sort by score (highest first), then by active count (lowest first)
+      // Sort by score (highest first), then by active count (lowest first), then by available slots
       scores.sort((a, b) => {
         if (b.score !== a.score) return b.score - a.score;
-        return a.activeCount - b.activeCount;
+        if (a.activeCount !== b.activeCount) return a.activeCount - b.activeCount;
+        return (b.availableSlots || 0) - (a.availableSlots || 0);
       });
 
-      // Pick the best employee
-      if (scores.length > 0 && scores[0].score > -100) {
-        // Only assign if score is reasonable
-        const selectedEmployee = scores[0];
-
-        // Build assignment reason
-        const specMatch = selectedEmployee.employee.specialization === requiredSpec.specialization
-          ? `specialization ${requiredSpec.specialization}`
-          : `role ${selectedEmployee.employee.specialization}`;
-
-        const skillText = selectedEmployee.skillMatches.length
-          ? `matched skills: ${selectedEmployee.skillMatches.map((s) => `${s.name}(${s.level})`).join(", ")}`
-          : "no specific skill matches";
-
-        const reason =
-          `Matched ${specMatch}; ${skillText}; workload: ${selectedEmployee.activeCount} active tasks`;
-
-        // Update task
-        await Task.findByIdAndUpdate(
-          task._id,
-          {
-            assignedTo: selectedEmployee.employee._id,
-            assignmentReason: reason,
-          },
-          { new: true }
-        );
-
-        assignments.push({
-          taskId: task._id,
-          taskTitle: task.title,
-          employeeId: selectedEmployee.employee._id,
-          employeeName: selectedEmployee.employee.fullName,
-          reason,
-        });
-
-        assignedCount++;
+      // Filter out employees with very low scores
+      const eligibleScores = scores.filter(s => s.score > -100);
+      
+      if (eligibleScores.length === 0) {
+        // No eligible employees found
+        continue;
       }
+
+      // For now, assign to the best employee (single assignment)
+      // TODO: If requiredCount > 1, we'd need to modify Task model to support multiple assignees
+      const selectedEmployee = eligibleScores[0];
+
+      // Build assignment reason
+      const specMatch = selectedEmployee.employee.specialization === requiredSpec.specialization
+        ? `specialization ${requiredSpec.specialization}`
+        : `role ${selectedEmployee.employee.specialization}`;
+
+      const skillText = selectedEmployee.skillMatches.length
+        ? `matched skills: ${selectedEmployee.skillMatches.map((s) => `${s.name}(${s.level})`).join(", ")}`
+        : "no specific skill matches";
+
+      const workloadText = `workload: ${selectedEmployee.activeCount} active tasks`;
+      const capacityText = selectedEmployee.availableSlots > 0 
+        ? `, capacity: ${selectedEmployee.availableSlots} slots available`
+        : "";
+
+      let reason = `Matched ${specMatch}; ${skillText}; ${workloadText}${capacityText}`;
+      
+      // Add warning if requiredCount > 1 but we can only assign one
+      if (requiredCount > 1) {
+        reason += ` (Note: Task requires ${requiredCount} employees, but only 1 can be assigned with current system)`;
+      }
+
+      // Update task
+      await Task.findByIdAndUpdate(
+        task._id,
+        {
+          assignedTo: selectedEmployee.employee._id,
+          assignmentReason: reason,
+        },
+        { new: true }
+      );
+
+      assignments.push({
+        taskId: task._id,
+        taskTitle: task.title,
+        employeeId: selectedEmployee.employee._id,
+        employeeName: selectedEmployee.employee.fullName,
+        reason,
+        score: selectedEmployee.score,
+        requiredCount,
+        assignedCount: 1,
+      });
+
+      assignedCount++;
     }
 
     return {

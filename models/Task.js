@@ -35,6 +35,11 @@ const taskSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    requiredAssigneesCount: {
+      type: Number,
+      default: 1,
+      min: 1,
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Admin",

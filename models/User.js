@@ -26,8 +26,13 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["user", "hr", "trainee"],
+      enum: ["user", "hr", "trainee", "personal"],
       default: "user",
+    },
+    workspaceMode: {
+      type: String,
+      enum: ["company", "personal"],
+      default: "company",
     },
     isActive: {
       type: Boolean,
@@ -69,6 +74,32 @@ const userSchema = new mongoose.Schema(
     maxConcurrentTasks: {
       type: Number,
       default: 5,
+    },
+    // Additional profile fields
+    phone: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    department: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    position: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    bio: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 500,
+    },
+    lastLogin: {
+      type: Date,
+      default: null,
     },
     // Track assignment reasons for transparency
     taskAssignmentNotes: [

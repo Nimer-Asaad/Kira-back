@@ -14,11 +14,17 @@ const generateToken = (id, role) => {
 // @access  Public
 const registerUser = async (req, res) => {
   try {
-    const { fullName, email, password } = req.body;
+    const { fullName, email, password, mode } = req.body;
+
+    // Log request for debugging
+    console.log("Signup request:", { fullName, email, mode, hasPassword: !!password });
 
     // Validate required fields
     if (!fullName || !email || !password) {
-      return res.status(400).json({ message: "Please provide all required fields" });
+      return res.status(400).json({ 
+        message: "Please provide all required fields",
+        details: { missing: { fullName: !fullName, email: !email, password: !password } }
+      });
     }
 
     // Check if user exists
@@ -27,18 +33,33 @@ const registerUser = async (req, res) => {
       return res.status(400).json({ message: "User already exists" });
     }
 
+    // Determine role and workspace mode
+    let userRole = "user";
+    let workspaceMode = "company";
+    
+    if (mode === "personal") {
+      userRole = "personal";
+      workspaceMode = "personal";
+    }
+
     // Create user
-    const user = await User.create({
+    const userData = {
       fullName,
       email,
       password,
-    });
+      role: userRole,
+      workspaceMode: workspaceMode,
+    };
+
+    console.log("Creating user with data:", { ...userData, password: "[HIDDEN]" });
+
+    const user = await User.create(userData);
 
     if (!user) {
       return res.status(400).json({ message: "Invalid user data" });
     }
 
-    const token = generateToken(user._id, "user");
+    const token = generateToken(user._id, userRole);
 
     res.status(201).json({
       token,
@@ -46,12 +67,18 @@ const registerUser = async (req, res) => {
         id: user._id,
         fullName: user.fullName,
         email: user.email,
-        role: "user",
+        role: userRole,
+        workspaceMode: workspaceMode,
       },
     });
   } catch (error) {
     console.error("Signup error:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    // Return detailed error for debugging
+    res.status(500).json({ 
+      message: "Server error", 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
 

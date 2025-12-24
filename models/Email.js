@@ -17,7 +17,19 @@ const emailSchema = new mongoose.Schema(
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
+      required: false, // Made optional for backward compatibility
+      index: true,
+    },
+    ownerUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: false,
+      index: true,
+    },
+    workspaceMode: {
+      type: String,
+      enum: ['company', 'personal'],
+      default: 'company',
       index: true,
     },
     gmailId: {
@@ -148,6 +160,18 @@ const emailSchema = new mongoose.Schema(
         default: 'unknown',
       },
       generatedAt: Date,
+    },
+    // Personal email AI summary fields
+    aiCategory: {
+      type: String,
+      enum: ['Work', 'Bills', 'Social', 'Promotions', 'Urgent', 'Other'],
+      default: null,
+    },
+    aiImportance: {
+      type: Number,
+      min: 1,
+      max: 5,
+      default: null,
     },
     // Embedding for smart search
     embedding: { type: [Number], default: undefined },

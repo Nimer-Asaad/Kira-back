@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const {
+  createUser,
   getUsers,
   getCurrentUser,
   updateCurrentUser,
@@ -15,7 +16,7 @@ const {
 const { protect, admin } = require("../middlewares/authMiddleware");
 const upload = require("../middlewares/uploadMiddleware");
 
-router.get("/", protect, admin, getUsers);
+router.route("/").get(protect, admin, getUsers).post(protect, admin, createUser);
 router
   .route("/me")
   .get(protect, getCurrentUser)
