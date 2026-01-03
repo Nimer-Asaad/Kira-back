@@ -45,7 +45,16 @@ async function getJsonFromText(systemPrompt, userText) {
   });
 
   const content = resp?.choices?.[0]?.message?.content || "{}";
-  return content;
+  
+  // Try to parse JSON
+  try {
+    // Remove markdown code blocks if present
+    const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    return JSON.parse(cleaned);
+  } catch (e) {
+    // If parsing fails, return as string (legacy behavior)
+    return content;
+  }
 }
 
 module.exports = { ensureOpenAI, getJsonFromText, MODEL };
