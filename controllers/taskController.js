@@ -1,7 +1,10 @@
 const Task = require("../models/Task");
 const Admin = require("../models/Admin");
 const User = require("../models/User");
-const { parsePdfTasks, normalizeTitle } = require("../services/pdfParsingService");
+const {
+  parsePdfTasks,
+  normalizeTitle,
+} = require("../services/pdfParsingService");
 const { autoDistributeTasks } = require("../services/taskDistributionService");
 
 // Safely parse JSON strings coming from forms
@@ -43,13 +46,18 @@ const createTask = async (req, res) => {
       checklist,
       attachments,
       ownerType: body.ownerType || "employee",
-      requiredAssigneesCount: Math.max(1, Number(body.requiredAssigneesCount) || 1),
+      requiredAssigneesCount: Math.max(
+        1,
+        Number(body.requiredAssigneesCount) || 1
+      ),
     });
 
-    // Add task to admin's createdTasks array
-    await Admin.findByIdAndUpdate(req.user._id, {
-      $push: { createdTasks: task._id },
-    });
+    // Add task to admin's createdTasks array (only if user is admin)
+    if (req.user.role === "admin") {
+      await Admin.findByIdAndUpdate(req.user._id, {
+        $push: { createdTasks: task._id },
+      });
+    }
 
     const populated = await Task.findById(task._id)
       .populate("assignedTo", "fullName email avatar")
@@ -62,13 +70,15 @@ const createTask = async (req, res) => {
   }
 };
 
-// @desc    Get all tasks (admin) with optional status filter
+// @desc    Get all tasks (admin/HR) with optional status filter
 // @route   GET /api/tasks/admin
-// @access  Private/Admin
+// @access  Private/Admin/HR
 const getAdminTasks = async (req, res) => {
   try {
     const { status, ownerType } = req.query;
-    const query = { createdBy: req.user._id };
+    // For HR users, show all tasks (not just created by them)
+    // For admin users, show only tasks created by them
+    const query = req.user.role === "hr" ? {} : { createdBy: req.user._id };
 
     if (status && status !== "all") {
       query.status = status;
@@ -96,7 +106,9 @@ const getAdminTasks = async (req, res) => {
 const getMyTasks = async (req, res) => {
   try {
     if (req.user.role !== "user" && req.user.role !== "trainee") {
-      return res.status(403).json({ message: "Only users can view their tasks" });
+      return res
+        .status(403)
+        .json({ message: "Only users can view their tasks" });
     }
 
     const { status } = req.query;
@@ -118,29 +130,32 @@ const getMyTasks = async (req, res) => {
   }
 };
 
-
-// @desc    Get task statistics (admin)
+// @desc    Get task statistics (admin/HR)
 // @route   GET /api/tasks/stats
-// @access  Private/Admin
+// @access  Private/Admin/HR
 const getTaskStats = async (req, res) => {
   try {
-    // Get stats only for tasks created by this admin
-    const total = await Task.countDocuments({ createdBy: req.user._id });
-    const pending = await Task.countDocuments({ 
-      createdBy: req.user._id, 
-      status: "pending" 
+    // For HR users, get stats for all tasks
+    // For admin users, get stats only for tasks created by them
+    const matchQuery =
+      req.user.role === "hr" ? {} : { createdBy: req.user._id };
+
+    const total = await Task.countDocuments(matchQuery);
+    const pending = await Task.countDocuments({
+      ...matchQuery,
+      status: "pending",
     });
-    const inProgress = await Task.countDocuments({ 
-      createdBy: req.user._id, 
-      status: "in-progress" 
+    const inProgress = await Task.countDocuments({
+      ...matchQuery,
+      status: "in-progress",
     });
-    const completed = await Task.countDocuments({ 
-      createdBy: req.user._id, 
-      status: "completed" 
+    const completed = await Task.countDocuments({
+      ...matchQuery,
+      status: "completed",
     });
 
     const priorityAgg = await Task.aggregate([
-      { $match: { createdBy: req.user._id } },
+      { $match: matchQuery },
       { $group: { _id: "$priority", count: { $sum: 1 } } },
     ]);
 
@@ -150,7 +165,7 @@ const getTaskStats = async (req, res) => {
       high: priorityAgg.find((p) => p._id === "high")?.count || 0,
     };
 
-    const recentTasks = await Task.find({ createdBy: req.user._id })
+    const recentTasks = await Task.find(matchQuery)
       .sort({ createdAt: -1 })
       .limit(5)
       .select("title status priority dueDate createdAt")
@@ -200,7 +215,10 @@ const updateTask = async (req, res) => {
     };
 
     if (body.requiredAssigneesCount !== undefined) {
-      updateData.requiredAssigneesCount = Math.max(1, Number(body.requiredAssigneesCount) || 1);
+      updateData.requiredAssigneesCount = Math.max(
+        1,
+        Number(body.requiredAssigneesCount) || 1
+      );
     }
 
     if (Array.isArray(checklist)) updateData.checklist = checklist;
@@ -242,7 +260,9 @@ const updateTaskStatus = async (req, res) => {
       task.assignedTo && task.assignedTo.toString() === req.user._id.toString();
 
     if (req.user.role !== "admin" && !isAssigned) {
-      return res.status(403).json({ message: "Not authorized to update this task" });
+      return res
+        .status(403)
+        .json({ message: "Not authorized to update this task" });
     }
 
     task.status = status;
@@ -270,7 +290,9 @@ const updateChecklistItem = async (req, res) => {
     const isAssigned =
       task.assignedTo && task.assignedTo.toString() === req.user._id.toString();
     if (req.user.role !== "admin" && !isAssigned) {
-      return res.status(403).json({ message: "Not authorized to update this task" });
+      return res
+        .status(403)
+        .json({ message: "Not authorized to update this task" });
     }
 
     // Support full checklist replacement: { checklist: [{ text, done }] }
@@ -286,7 +308,8 @@ const updateChecklistItem = async (req, res) => {
       if (!checklistItem) {
         return res.status(404).json({ message: "Checklist item not found" });
       }
-      checklistItem.done = typeof done === "boolean" ? done : !checklistItem.done;
+      checklistItem.done =
+        typeof done === "boolean" ? done : !checklistItem.done;
     }
 
     await task.save();
@@ -313,15 +336,22 @@ const deleteTask = async (req, res) => {
       return res.status(404).json({ message: "Task not found" });
     }
 
-    // Ensure admin can only delete their own tasks
-    if (task.createdBy.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: "Not authorized to delete this task" });
+    // Ensure admin/HR can only delete their own tasks (or HR can delete any)
+    if (
+      req.user.role !== "hr" &&
+      task.createdBy.toString() !== req.user._id.toString()
+    ) {
+      return res
+        .status(403)
+        .json({ message: "Not authorized to delete this task" });
     }
 
-    // Remove task from admin's createdTasks
-    await Admin.findByIdAndUpdate(req.user._id, {
-      $pull: { createdTasks: task._id },
-    });
+    // Remove task from admin's createdTasks (only if user is admin)
+    if (req.user.role === "admin") {
+      await Admin.findByIdAndUpdate(req.user._id, {
+        $pull: { createdTasks: task._id },
+      });
+    }
 
     await task.deleteOne();
     res.json({ message: "Task removed" });
@@ -345,10 +375,14 @@ const getTaskById = async (req, res) => {
     }
 
     const isAssigned =
-      task.assignedTo && task.assignedTo._id && task.assignedTo._id.toString() === req.user._id.toString();
+      task.assignedTo &&
+      task.assignedTo._id &&
+      task.assignedTo._id.toString() === req.user._id.toString();
 
     if (req.user.role !== "admin" && !isAssigned) {
-      return res.status(403).json({ message: "Not authorized to view this task" });
+      return res
+        .status(403)
+        .json({ message: "Not authorized to view this task" });
     }
 
     res.json(task);
@@ -392,9 +426,12 @@ const importTasksFromPDF = async (req, res) => {
 
     // Build de-duplication key set for existing tasks
     const userId = req.user._id.toString();
-    const toDateOnly = (d) => (d ? new Date(d).toISOString().slice(0, 10) : null);
+    const toDateOnly = (d) =>
+      d ? new Date(d).toISOString().slice(0, 10) : null;
 
-    const parsedTitles = parsedTasks.map((t) => normalizeTitle(t.title)).filter(Boolean);
+    const parsedTitles = parsedTasks
+      .map((t) => normalizeTitle(t.title))
+      .filter(Boolean);
     const parsedDueDates = parsedTasks
       .map((t) => (t.dueDate ? toDateOnly(t.dueDate) : null))
       .filter(Boolean);
@@ -403,32 +440,51 @@ const importTasksFromPDF = async (req, res) => {
     const existingQuery = { createdBy: req.user._id };
     const orConds = [];
     if (parsedTitles.length) orConds.push({ title: { $in: parsedTitles } });
-    if (parsedDueDates.length) orConds.push({ dueDate: { $in: parsedDueDates.map((d) => new Date(d)) } });
+    if (parsedDueDates.length)
+      orConds.push({
+        dueDate: { $in: parsedDueDates.map((d) => new Date(d)) },
+      });
     if (hasNullDue) orConds.push({ dueDate: null });
     if (orConds.length) existingQuery.$or = orConds;
 
-    const existing = await Task.find(existingQuery).select("title dueDate createdBy");
+    const existing = await Task.find(existingQuery).select(
+      "title dueDate createdBy"
+    );
     console.log("[PDF Import] Existing tasks fetched:", existing.length);
     const existingKeySet = new Set(
       existing.map((doc) => {
         const titleKey = normalizeTitle(doc.title);
-        const dueKey = doc.dueDate ? new Date(doc.dueDate).toISOString().slice(0, 10) : "null";
+        const dueKey = doc.dueDate
+          ? new Date(doc.dueDate).toISOString().slice(0, 10)
+          : "null";
         return `${userId}|${titleKey}|${dueKey}`;
       })
     );
 
     // Build assignTo mapping cache (optional)
-    const assignStrings = Array.from(new Set(parsedTasks.map(t => (t.assignTo || '').trim()).filter(Boolean)));
+    const assignStrings = Array.from(
+      new Set(parsedTasks.map((t) => (t.assignTo || "").trim()).filter(Boolean))
+    );
     const assignMap = {};
     if (assignStrings.length) {
       // Match by email first
-      const byEmail = await User.find({ email: { $in: assignStrings.map(s => s.toLowerCase()) } }).select('_id email fullName');
-      byEmail.forEach(u => { assignMap[u.email.toLowerCase()] = u._id; });
+      const byEmail = await User.find({
+        email: { $in: assignStrings.map((s) => s.toLowerCase()) },
+      }).select("_id email fullName");
+      byEmail.forEach((u) => {
+        assignMap[u.email.toLowerCase()] = u._id;
+      });
       // Then match by exact fullName for remaining
-      const remainingNames = assignStrings.filter(s => !assignMap[s.toLowerCase()]);
+      const remainingNames = assignStrings.filter(
+        (s) => !assignMap[s.toLowerCase()]
+      );
       if (remainingNames.length) {
-        const byName = await User.find({ fullName: { $in: remainingNames } }).select('_id fullName email');
-        byName.forEach(u => { assignMap[u.fullName] = u._id; });
+        const byName = await User.find({
+          fullName: { $in: remainingNames },
+        }).select("_id fullName email");
+        byName.forEach((u) => {
+          assignMap[u.fullName] = u._id;
+        });
       }
     }
 
@@ -448,14 +504,16 @@ const importTasksFromPDF = async (req, res) => {
 
       const assignedTo = (() => {
         if (task.assignTo) {
-          const keyEmail = (task.assignTo || '').toLowerCase();
+          const keyEmail = (task.assignTo || "").toLowerCase();
           if (assignMap[keyEmail]) return assignMap[keyEmail];
           if (assignMap[task.assignTo]) return assignMap[task.assignTo];
         }
         return null;
       })();
 
-      const requestedAssignee = task.assignTo ? `Requested assignee: ${task.assignTo}` : "";
+      const requestedAssignee = task.assignTo
+        ? `Requested assignee: ${task.assignTo}`
+        : "";
 
       // Normalize checklist entries to object form { text, done }
       const checklist = Array.isArray(task.checklist)
@@ -485,7 +543,9 @@ const importTasksFromPDF = async (req, res) => {
         checklist,
         ownerType: "employee",
         assignedTo,
-        assignmentReason: assignedTo ? requestedAssignee : requestedAssignee || "",
+        assignmentReason: assignedTo
+          ? requestedAssignee
+          : requestedAssignee || "",
       });
     });
 
@@ -532,7 +592,9 @@ const importTasksFromPDF = async (req, res) => {
     });
   } catch (error) {
     console.error("PDF import error:", error);
-    res.status(500).json({ message: "PDF import failed", error: error.message });
+    res
+      .status(500)
+      .json({ message: "PDF import failed", error: error.message });
   }
 };
 
@@ -554,12 +616,10 @@ const distributeTasksAuto = async (req, res) => {
     });
   } catch (error) {
     console.error("Auto-distribution error:", error);
-    res
-      .status(500)
-      .json({
-        message: "Auto-distribution failed",
-        error: error.message,
-      });
+    res.status(500).json({
+      message: "Auto-distribution failed",
+      error: error.message,
+    });
   }
 };
 

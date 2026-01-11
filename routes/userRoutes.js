@@ -13,16 +13,19 @@ const {
   getTeamStats,
   uploadAvatar,
 } = require("../controllers/userController");
-const { protect, admin } = require("../middlewares/authMiddleware");
+const { protect, admin, hrOrAdmin } = require("../middlewares/authMiddleware");
 const upload = require("../middlewares/uploadMiddleware");
 
-router.route("/").get(protect, admin, getUsers).post(protect, admin, createUser);
+router
+  .route("/")
+  .get(protect, hrOrAdmin, getUsers)
+  .post(protect, admin, createUser);
 router
   .route("/me")
   .get(protect, getCurrentUser)
   .put(protect, updateCurrentUser);
 router.post("/me/avatar", protect, upload.single("avatar"), uploadAvatar);
-router.get("/team/stats", protect, admin, getTeamStats);
+router.get("/team/stats", protect, hrOrAdmin, getTeamStats);
 router
   .route("/:id")
   .get(protect, admin, getUserById)
