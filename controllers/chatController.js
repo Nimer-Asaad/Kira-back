@@ -178,6 +178,34 @@ exports.markAsRead = async (req, res) => {
   }
 };
 
+// Clear chat history with a specific user
+exports.clearChat = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const currentUserId = req.user._id;
+
+    if (!userId) {
+      return res.status(400).json({ message: "User ID is required" });
+    }
+
+    // Delete all messages between current user and target user
+    const result = await Message.deleteMany({
+      $or: [
+        { sender: currentUserId, receiver: userId },
+        { sender: userId, receiver: currentUserId },
+      ],
+    });
+
+    res.json({
+      message: "Chat history cleared successfully",
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    console.error("Clear chat error:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
 // Get available users to chat with (any role → everyone)
 exports.getAvailableUsers = async (req, res) => {
   try {

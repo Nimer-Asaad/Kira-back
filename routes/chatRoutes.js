@@ -7,6 +7,7 @@ const {
   getUnreadCount,
   markAsRead,
   getAvailableUsers,
+  clearChat,
 } = require("../controllers/chatController");
 const { protect } = require("../middlewares/authMiddleware");
 
@@ -30,5 +31,8 @@ router.post("/mark-read", markAsRead);
 
 // Get available users to chat with
 router.get("/available-users", getAvailableUsers);
+
+// Clear chat history with a user
+router.delete("/clear/:userId", clearChat);
 
 module.exports = router;

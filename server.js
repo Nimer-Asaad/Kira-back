@@ -138,6 +138,7 @@ app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/tasks", require("./routes/taskRoutes"));
 app.use("/api/users", require("./routes/userRoutes"));
 app.use("/api/reports", require("./routes/reportRoutes"));
+app.use("/api/translate", require("./routes/translateRoutes"));
 app.use("/api/hr", require("./routes/hrApplicantRoutes"));
 app.use("/api/hr", require("./routes/traineeRoutes"));
 app.use("/api/hr/trainees", require("./routes/traineeLifecycleRoutes"));

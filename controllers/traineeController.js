@@ -136,8 +136,8 @@ async function listTrainees(req, res) {
 
     res.json(data);
   } catch (err) {
-    console.error("listTrainees error", err);
-    res.status(500).json({ message: "Server error" });
+    console.error("listTrainees error:", err.message || err);
+    res.status(500).json({ message: "Server error", error: err.message });
   }
 }
 
@@ -501,7 +501,7 @@ async function generateTasks(req, res) {
         priority: t.difficulty === "hard" ? "high" : t.difficulty === "easy" ? "low" : "medium",
         status: "pending",
         dueDate,
-        assignedTo: trainee.userId ? [trainee.userId] : [],
+        assignedTo: trainee.userId || null,
         createdBy: req.user._id,
         checklist: [],
         attachments: [],

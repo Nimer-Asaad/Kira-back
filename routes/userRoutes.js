@@ -24,7 +24,11 @@ router
   .route("/me")
   .get(protect, getCurrentUser)
   .put(protect, updateCurrentUser);
-router.post("/me/avatar", protect, upload.single("avatar"), uploadAvatar);
+// Accept both POST and PUT for avatar upload (frontend may use either)
+router
+  .route("/me/avatar")
+  .post(protect, upload.single("avatar"), uploadAvatar)
+  .put(protect, upload.single("avatar"), uploadAvatar);
 router.get("/team/stats", protect, hrOrAdmin, getTeamStats);
 router
   .route("/:id")

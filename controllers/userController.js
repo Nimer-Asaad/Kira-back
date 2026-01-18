@@ -223,7 +223,7 @@ const updateUser = async (req, res) => {
 };
 
 // @desc    Upload avatar for current user
-// @route   POST /api/users/me/avatar
+// @route   POST/PUT /api/users/me/avatar
 // @access  Private
 const uploadAvatar = async (req, res) => {
   try {
