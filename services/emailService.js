@@ -106,4 +106,36 @@ ${passwordLineText}
   }
 }
 
-module.exports = { sendTraineeCredentials };
+async function sendTrainingSubmittedEmail(toEmail, fullName) {
+  try {
+    const html = `<p>Hello ${fullName},</p><p>Your training submission is complete. We will contact you if we need anything else.</p>`;
+    await transporter.sendMail({
+      from: process.env.HR_EMAIL || "hr@company.com",
+      to: toEmail,
+      subject: "Training Submitted",
+      html,
+      text: `Hello ${fullName}, Your training submission is complete.`,
+    });
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+}
+
+async function sendHiringEmail(toEmail, fullName) {
+  try {
+    const html = `<p>Congratulations ${fullName},</p><p>You have been hired. Our team will follow up shortly.</p>`;
+    await transporter.sendMail({
+      from: process.env.HR_EMAIL || "hr@company.com",
+      to: toEmail,
+      subject: "You're Hired",
+      html,
+      text: `Congratulations ${fullName}, you have been hired.`,
+    });
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+}
+
+module.exports = { sendTraineeCredentials, sendTrainingSubmittedEmail, sendHiringEmail };

@@ -169,6 +169,20 @@ const taskSchema = new mongoose.Schema(
       evaluatedAt: { type: Date, default: null },
       model: { type: String, default: "" },
     },
+    // Manual adjustment tracking (HR override for AI scoring)
+    manuallyAdjustedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    manualAdjustmentDate: {
+      type: Date,
+      default: null,
+    },
+    manualAdjustmentPrevious: {
+      type: Number,
+      default: null,
+    },
   },
   {
     timestamps: true,

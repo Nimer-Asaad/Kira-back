@@ -26,7 +26,7 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["user", "hr", "trainee", "personal"],
+      enum: ["user", "hr", "trainee", "personal", "part_time"],
       default: "user",
     },
     workspaceMode: {

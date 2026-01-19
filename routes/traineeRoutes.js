@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { protect, hrOrAdmin } = require("../middlewares/authMiddleware");
+const { protect, hrOrAdmin, admin } = require("../middlewares/authMiddleware");
 const uploadPdf = require("../middlewares/pdfUpload");
 const {
   listTrainees,
@@ -11,13 +11,14 @@ const {
   evaluateTrainee,
   saveHrEvaluation,
   promoteTrainee,
+  archiveTrainee,
   traineeStats,
   linkUser,
   revertToHired,
   hrRescoreTask,
   getAiStatus,
 } = require("../controllers/traineeController");
-const { hrRescoreTrainingTask } = require("../controllers/traineeTaskController");
+const { hrRescoreTrainingTask, hrUpdateTaskPoints } = require("../controllers/traineeTaskController");
 
 // HR routes
 router.get("/trainees", protect, hrOrAdmin, listTrainees);
@@ -36,11 +37,13 @@ router.get("/trainees/:traineeId/progress-tasks", protect, hrOrAdmin, getTrainee
 router.patch("/trainees/:traineeId/evaluate", protect, hrOrAdmin, evaluateTrainee);
 router.put("/trainees/:traineeId/evaluation", protect, hrOrAdmin, saveHrEvaluation);
 router.post("/trainees/:traineeId/promote", protect, hrOrAdmin, promoteTrainee);
+router.post("/trainees/:traineeId/archive", protect, admin, archiveTrainee);
 router.post("/trainees/:traineeId/link-user", protect, hrOrAdmin, linkUser);
 router.delete("/trainees/:id/revert-to-hired", protect, hrOrAdmin, revertToHired);
 router.post("/trainees/:traineeId/tasks/:taskId/rescore", protect, hrOrAdmin, hrRescoreTask);
 
 router.post("/training-tasks/:taskId/ai-rescore", protect, hrOrAdmin, hrRescoreTrainingTask);
+router.patch("/training-tasks/:taskId/points", protect, hrOrAdmin, hrUpdateTaskPoints);
 router.get("/ai/status", protect, hrOrAdmin, getAiStatus);
 
 module.exports = router;

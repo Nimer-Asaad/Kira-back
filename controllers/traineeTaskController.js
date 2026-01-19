@@ -258,4 +258,57 @@ async function hrRescoreTrainingTask(req, res) {
   }
 }
 
-module.exports = { submitTask, getDashboard, hrRescoreTrainingTask };
+// HR Update Task Points - Allow HR to manually adjust earned points
+const hrUpdateTaskPoints = async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { earnedPoints } = req.body;
+
+    // Validate input
+    if (earnedPoints === undefined || earnedPoints === null) {
+      return res.status(400).json({ message: "earnedPoints is required" });
+    }
+
+    const points = parseInt(earnedPoints, 10);
+    if (isNaN(points)) {
+      return res.status(400).json({ message: "earnedPoints must be a valid number" });
+    }
+
+    if (points < 0) {
+      return res.status(400).json({ message: "earnedPoints cannot be negative" });
+    }
+
+    // Find the task
+    const Task = require("../models/Task");
+    const task = await Task.findById(taskId);
+
+    if (!task) {
+      return res.status(404).json({ message: "Task not found" });
+    }
+
+    // Validate points don't exceed maxPoints
+    if (points > (task.maxPoints || 100)) {
+      return res.status(400).json({
+        message: `earnedPoints cannot exceed maxPoints (${task.maxPoints || 100})`,
+      });
+    }
+
+    // Store previous value before updating
+    const previousPoints = task.earnedPoints;
+
+    // Update earnedPoints
+    task.earnedPoints = points;
+    task.manuallyAdjustedBy = req.user._id; // Track who made the adjustment
+    task.manualAdjustmentDate = new Date(); // Track when it was adjusted
+    task.manualAdjustmentPrevious = previousPoints; // Store previous value
+
+    await task.save();
+
+    res.json({ task });
+  } catch (err) {
+    console.error("hrUpdateTaskPoints error", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+module.exports = { submitTask, getDashboard, hrRescoreTrainingTask, hrUpdateTaskPoints };

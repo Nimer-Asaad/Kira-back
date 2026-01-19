@@ -3,7 +3,7 @@ const Applicant = require("../models/Applicant");
 const Task = require("../models/Task");
 const User = require("../models/User");
 const { getJsonFromText, ensureOpenAI, MODEL } = require("../services/openaiClient");
-const { sendTraineeCredentials } = require("../services/emailService");
+const { sendTraineeCredentials, sendHiringEmail } = require("../services/emailService");
 const pdfParse = require("pdf-parse");
 const fs = require("fs");
 const path = require("path");
@@ -524,8 +524,13 @@ async function generateTasks(req, res) {
       created = await Task.insertMany(docs);
     }
 
-    // Update trainee required count
-    await Trainee.findByIdAndUpdate(trainee._id, { requiredTasksCount: created.length });
+    // Update trainee required count AND reset trainingStatus to active if it was submitted
+    const updateData = { requiredTasksCount: created.length };
+    if (trainee.trainingStatus === "submitted" || trainee.trainingStatus === "expired") {
+      updateData.trainingStatus = "active";
+      updateData.trainingSubmittedAt = null;
+    }
+    await Trainee.findByIdAndUpdate(trainee._id, updateData);
 
     res.status(201).json({ tasks: created });
   } catch (err) {
@@ -628,8 +633,108 @@ async function saveHrEvaluation(req, res) {
       update.status = statusMap[hrDecision];
     }
 
+    // Gate: allow only if training submitted or expired (or not set)
+    const current = await Trainee.findById(traineeId);
+    if (!current) return res.status(404).json({ message: "Trainee not found" });
+    const statusOk = ["submitted", "expired", undefined, null].includes(current.trainingStatus);
+    if (!statusOk && current.trainingStatus !== undefined) {
+      return res.status(400).json({ message: "Evaluation allowed only after trainee submits or training expires" });
+    }
+
     const trainee = await Trainee.findByIdAndUpdate(traineeId, update, { new: true });
     if (!trainee) return res.status(404).json({ message: "Trainee not found" });
+
+    // Auto-rescore all submitted tasks when HR saves evaluation
+    const { ensureOpenAI } = require("../services/openaiClient");
+    const { evaluateTrainingTaskSubmission } = require("../services/trainingEval");
+    const ai = ensureOpenAI();
+    if (ai) {
+      try {
+        const submittedTasks = await Task.find({ 
+          type: "training", 
+          ownerType: "trainee", 
+          ownerId: trainee._id,
+          status: "submitted"
+        });
+
+        for (const task of submittedTasks) {
+          if (task.submission && (task.submission.repoUrl || task.submission.codeSnippet)) {
+            try {
+              // Evaluate with AI
+              const aiEval = await evaluateTrainingTaskSubmission(task.toObject(), task.submission);
+              task.aiEvaluation = aiEval;
+              
+              // Compute timing bonuses/penalties
+              function computePointsWithTiming(basePoints, dueAt, submittedAt) {
+                if (!dueAt || !submittedAt) {
+                  return { earned: basePoints, basePoints, earlyBonus: 0, lateMinutes: 0, latePenalty: 0 };
+                }
+                const dueTime = new Date(dueAt).getTime();
+                const subTime = new Date(submittedAt).getTime();
+                const diffMs = subTime - dueTime;
+                const diffMinutes = Math.round(diffMs / 60000);
+                let earned = basePoints;
+                let earlyBonus = 0, latePenalty = 0, lateMinutes = 0;
+                if (diffMinutes < 0) {
+                  const earlyDays = Math.floor(Math.abs(diffMinutes) / (24 * 60));
+                  earlyBonus = Math.min(earlyDays, 3);
+                  earned += earlyBonus;
+                } else if (diffMinutes > 0) {
+                  const lateDays = Math.floor(diffMinutes / (24 * 60));
+                  latePenalty = Math.min(lateDays, 5);
+                  earned -= latePenalty;
+                  lateMinutes = diffMinutes;
+                }
+                earned = Math.max(0, earned);
+                return { earned, basePoints, earlyBonus, lateMinutes, latePenalty };
+              }
+              
+              const timing = computePointsWithTiming(aiEval.score, task.dueAt, task.submission?.submittedAt);
+              task.earnedPoints = timing.earned;
+              task.status = "reviewed";
+              task.scoringBreakdown = {
+                basePoints: timing.basePoints,
+                earlyBonus: timing.earlyBonus,
+                lateMinutes: timing.lateMinutes,
+                latePenalty: timing.latePenalty,
+              };
+              await task.save();
+            } catch (taskErr) {
+              console.error(`Failed to auto-rescore task ${task._id}:`, taskErr);
+              // Continue with other tasks even if one fails
+            }
+          }
+        }
+
+        // Recompute trainee aggregates
+        const allTasks = await Task.find({ type: "training", ownerId: trainee._id });
+        const doneStatuses = ["completed", "reviewed"];
+        const completed = allTasks.filter((t) => doneStatuses.includes(t.status)).length;
+        const totalEarned = allTasks.reduce((sum, t) => sum + (t.earnedPoints || 0), 0);
+        let onTime = 0, early = 0, late = 0;
+        for (const t of allTasks) {
+          if (doneStatuses.includes(t.status)) {
+            if (t.scoringBreakdown?.earlyBonus > 0) early++;
+            else if (t.scoringBreakdown?.latePenalty > 0) late++;
+            else onTime++;
+          }
+        }
+        await Trainee.findByIdAndUpdate(trainee._id, {
+          completedTasksCount: completed,
+          requiredTasksCount: allTasks.length,
+          totalEarnedPoints: totalEarned,
+          averagePointsPerTask: completed > 0 ? totalEarned / completed : 0,
+          completionRate: allTasks.length > 0 ? Math.round((completed / allTasks.length) * 100) : 0,
+          onTimeTasksCount: onTime,
+          earlyTasksCount: early,
+          lateTasksCount: late,
+        });
+      } catch (rescoreErr) {
+        console.error("Auto-rescore error:", rescoreErr);
+        // Don't fail the evaluation if auto-rescore fails
+      }
+    }
+
     res.json(trainee);
   } catch (err) {
     console.error("saveHrEvaluation error", err);
@@ -640,8 +745,16 @@ async function saveHrEvaluation(req, res) {
 // POST /api/hr/trainees/:traineeId/promote
 async function promoteTrainee(req, res) {
   try {
-    const trainee = await Trainee.findById(req.params.traineeId).populate("applicantId");
+    const { traineeId } = req.params;
+    const { employmentType } = req.body; // 'full_time' or 'part_time'
+    
+    if (!traineeId) {
+      return res.status(400).json({ message: "Trainee ID is required" });
+    }
+    
+    const trainee = await Trainee.findById(traineeId).populate("applicantId");
     if (!trainee) return res.status(404).json({ message: "Trainee not found" });
+    if (!trainee.applicantId) return res.status(400).json({ message: "Trainee has no applicant info" });
 
     const completionRate = trainee.completionRate || 0;
     const finalScore = trainee.hrFinalScore || 0;
@@ -650,37 +763,147 @@ async function promoteTrainee(req, res) {
       return res.status(400).json({ message: "Trainee not eligible for promotion" });
     }
 
-    // create or update a User with role 'trainee' -> 'user'
-    let user = null;
-    if (trainee.userId) {
-      user = await User.findByIdAndUpdate(trainee.userId, { role: "user" }, { new: true });
-    }
-    if (!user) {
-      // try existing user by email
-      user = await User.findOne({ email: trainee.applicantId.email });
-      if (user) {
-        user.role = "user";
-        await user.save();
-      } else {
-        // create a new enabled employee user with random password
-        const randomPass = Math.random().toString(36).slice(2) + Math.random().toString(36).toUpperCase().slice(2);
-        user = await User.create({
-          fullName: trainee.applicantId.fullName,
-          email: trainee.applicantId.email,
-          password: randomPass,
-          role: "user",
-        });
-      }
-      // link back to trainee
-      await Trainee.findByIdAndUpdate(trainee._id, { userId: user._id });
+    // Determine role based on employmentType or decision
+    let newRole = "user";
+    if (employmentType === "part_time" || trainee.hrDecision === "part_time_candidate") {
+      newRole = "part_time";
     }
 
+    // create or update a User
+    let user = null;
+    
+    try {
+      if (trainee.userId) {
+        // Update existing user - preserve existing data but update role
+        user = await User.findByIdAndUpdate(trainee.userId, { role: newRole }, { new: true });
+      }
+      
+      if (!user) {
+        // try existing user by email
+        user = await User.findOne({ email: trainee.applicantId.email });
+        if (user) {
+          user.role = newRole;
+          
+          // Update user profile with applicant data if not already set
+          if (!user.position && trainee.applicantId.position) {
+            user.position = trainee.applicantId.position;
+          }
+          
+          // Map position to specialization
+          if (!user.specialization || user.specialization === "General") {
+            const position = trainee.applicantId.position || trainee.position;
+            if (position) {
+              const posLower = position.toLowerCase();
+              if (posLower.includes("frontend") || posLower.includes("react") || posLower.includes("vue")) {
+                user.specialization = "Frontend";
+              } else if (posLower.includes("backend") || posLower.includes("node") || posLower.includes("api")) {
+                user.specialization = "Backend";
+              } else if (posLower.includes("ai") || posLower.includes("ml")) {
+                user.specialization = "AI";
+              } else if (posLower.includes("qa") || posLower.includes("test")) {
+                user.specialization = "QA";
+              } else if (posLower.includes("devops") || posLower.includes("cloud")) {
+                user.specialization = "DevOps";
+              } else if (posLower.includes("ui") || posLower.includes("ux") || posLower.includes("design")) {
+                user.specialization = "UI/UX";
+              }
+            }
+          }
+          
+          // Extract skills from AI summary if available
+          if (trainee.applicantId.aiSummary && trainee.applicantId.aiSummary.skills) {
+            if (Array.isArray(trainee.applicantId.aiSummary.skills) && (!user.skills || user.skills.length === 0)) {
+              user.skills = trainee.applicantId.aiSummary.skills.slice(0, 10).map((skill) => {
+                return {
+                  name: typeof skill === "string" ? skill : (skill?.name || "Unknown"),
+                  level: 3
+                };
+              });
+            }
+          }
+          
+          await user.save();
+        } else {
+          // create a new enabled employee user with random password
+          const randomPass = Math.random().toString(36).slice(2) + Math.random().toString(36).toUpperCase().slice(2);
+          
+          const position = trainee.applicantId.position || trainee.position || "";
+          let specialization = "General";
+          
+          if (position) {
+            const posLower = position.toLowerCase();
+            if (posLower.includes("frontend") || posLower.includes("react") || posLower.includes("vue")) {
+              specialization = "Frontend";
+            } else if (posLower.includes("backend") || posLower.includes("node") || posLower.includes("api")) {
+              specialization = "Backend";
+            } else if (posLower.includes("ai") || posLower.includes("ml")) {
+              specialization = "AI";
+            } else if (posLower.includes("qa") || posLower.includes("test")) {
+              specialization = "QA";
+            } else if (posLower.includes("devops") || posLower.includes("cloud")) {
+              specialization = "DevOps";
+            } else if (posLower.includes("ui") || posLower.includes("ux") || posLower.includes("design")) {
+              specialization = "UI/UX";
+            }
+          }
+          
+          let skills = [];
+          if (trainee.applicantId.aiSummary && trainee.applicantId.aiSummary.skills && Array.isArray(trainee.applicantId.aiSummary.skills)) {
+            skills = trainee.applicantId.aiSummary.skills.slice(0, 10).map((skill) => {
+              return {
+                name: typeof skill === "string" ? skill : (skill?.name || "Unknown"),
+                level: 3
+              };
+            });
+          }
+          
+          user = await User.create({
+            fullName: trainee.applicantId.fullName,
+            email: trainee.applicantId.email,
+            password: randomPass,
+            role: newRole,
+            position: position,
+            specialization: specialization,
+            skills: skills
+          });
+        }
+      }
+      
+      // link back to trainee
+      if (user && !trainee.userId) {
+        await Trainee.findByIdAndUpdate(trainee._id, { userId: user._id });
+      }
+    } catch (userErr) {
+      console.error("Error creating/updating user:", userErr.message);
+      throw userErr;
+    }
+
+    // Update trainee status
     await Trainee.findByIdAndUpdate(trainee._id, { status: "promoted", hrDecision: "promoted", promotedAt: new Date() });
     await Applicant.findByIdAndUpdate(trainee.applicantId._id, { stage: "Hired" });
 
-    res.json({ message: "Trainee promoted", traineeId: trainee._id, userId: user?._id });
+    res.json({ message: "Trainee promoted", traineeId: trainee._id, userId: user?._id, role: newRole });
   } catch (err) {
-    console.error("promoteTrainee error", err);
+    console.error("promoteTrainee error:", err.message || err);
+    console.error("Error stack:", err.stack);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+}
+
+// POST /api/hr/trainees/:traineeId/archive
+async function archiveTrainee(req, res) {
+  try {
+    const trainee = await Trainee.findById(req.params.traineeId).populate("applicantId");
+    if (!trainee) return res.status(404).json({ message: "Trainee not found" });
+
+    await Trainee.findByIdAndUpdate(trainee._id, { status: "archived" });
+    if (trainee.applicantId) {
+      await Applicant.findByIdAndUpdate(trainee.applicantId._id, { stage: "Rejected" });
+    }
+
+    res.json({ message: "Candidate archived" });
+  } catch (err) {
+    console.error("archiveTrainee error", err);
     res.status(500).json({ message: "Server error" });
   }
 }
@@ -744,6 +967,7 @@ module.exports = {
   traineeStats,
   linkUser,
   revertToHired,
+  archiveTrainee,
 };
 
 // POST /api/hr/trainees/:traineeId/tasks/:taskId/rescore

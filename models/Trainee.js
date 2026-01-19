@@ -204,6 +204,20 @@ const traineeSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+    // Training workflow status
+    trainingStatus: {
+      type: String,
+      enum: ["active", "submitted", "expired"],
+      default: "active",
+    },
+    trainingSubmittedAt: {
+      type: Date,
+      default: null,
+    },
+    trainingEndAt: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true }
 );
