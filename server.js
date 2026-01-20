@@ -112,8 +112,17 @@ const corsOptions = {
     if (!allowedOrigins.length) {
       return callback(null, process.env.NODE_ENV !== "production");
     }
-    // Exact match only (you can add more sophisticated matching if needed)
+    // Exact match only (plus simple dev alias for Android emulator)
     if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    // Dev helper: if localhost:5173 is allowed, also allow 10.0.2.2:5173 (Android emulator)
+    const isDevEmulator =
+      process.env.NODE_ENV !== "production" &&
+      origin.startsWith("http://10.0.2.2:5173") &&
+      allowedOrigins.includes("http://localhost:5173");
+    if (isDevEmulator) {
       return callback(null, true);
     }
     // Block others
