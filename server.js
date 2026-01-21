@@ -80,7 +80,15 @@ if (process.env.TRUST_PROXY === "true") {
 }
 
 // Security headers
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: false,
+    crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: false,
+    contentSecurityPolicy: false,
+    originAgentCluster: false,
+  })
+);
 
 // Basic rate limiter for /api endpoints
 const apiLimiter = rateLimit({
@@ -139,8 +147,17 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 
-// Serve static files
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+// Serve static files with permissive headers
+app.use("/uploads", (req, res, next) => {
+  // Allow any domain to access these assets
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  // Tell browser this resource can be loaded cross-origin
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  // Disable blocking features
+  res.removeHeader("Cross-Origin-Embedder-Policy");
+  res.removeHeader("Cross-Origin-Opener-Policy");
+  next();
+}, express.static(path.join(__dirname, "uploads")));
 
 // Routes
 app.use("/api/auth", require("./routes/authRoutes"));
@@ -187,8 +204,9 @@ const HOST = process.env.BIND_HOST || "0.0.0.0" || "localhost" || "10.0.2.2";
 
 app.listen(PORT, HOST, () => {
   console.log(
-    `Server running on http://${HOST}:${PORT} (NODE_ENV=${
-      process.env.NODE_ENV || "development"
+    `Server running on http://${HOST}:${PORT} (NODE_ENV=${process.env.NODE_ENV || "development"
     })`
   );
 });
+
+module.exports = app;

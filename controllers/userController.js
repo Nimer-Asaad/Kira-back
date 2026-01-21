@@ -1,5 +1,7 @@
 const User = require("../models/User");
+const Admin = require("../models/Admin");
 const Task = require("../models/Task");
+const { sendUserCredentials, sendUserRoleUpdate } = require("../services/emailService");
 
 // @desc    Create new user (Admin only)
 // @route   POST /api/users
@@ -20,7 +22,7 @@ const createUser = async (req, res) => {
     }
 
     // Validate role
-    const validRoles = ["user", "hr", "trainee"];
+    const validRoles = ["user", "hr", "trainee", "part_time", "full_time"];
     const userRole = validRoles.includes(role) ? role : "user";
 
     // Create user (password will be hashed by pre-save hook)
@@ -38,8 +40,9 @@ const createUser = async (req, res) => {
       return res.status(400).json({ message: "Password must be at least 6 characters" });
     } else {
       // Generate a random password if not provided (user will need to reset)
-      userData.password = Math.random().toString(36).slice(-12) + Math.random().toString(36).slice(-12);
+      userData.password = Math.random().toString(36).slice(-10) + Math.random().toString(36).toUpperCase().slice(-5);
     }
+    const rawPassword = userData.password;
 
     if (phone) userData.phone = phone.trim();
     if (department) userData.department = department.trim();
@@ -55,6 +58,11 @@ const createUser = async (req, res) => {
       message: "User created successfully",
       user: userResponse,
     });
+
+    // Send welcome email asynchronously
+    const appUrl = process.env.APP_URL || "http://localhost:5173";
+    sendUserCredentials(userData.email, userData.fullName, rawPassword, userData.role, appUrl)
+      .catch(err => console.error("Failed to send welcome email:", err));
   } catch (error) {
     console.error("Error creating user:", error);
     if (error.code === 11000) {
@@ -231,17 +239,26 @@ const uploadAvatar = async (req, res) => {
       return res.status(400).json({ message: "No file uploaded" });
     }
 
-    const imageUrl = `${req.protocol}://${req.get("host")}/uploads/${req.file.filename}`;
+    const host = req.get("host");
+    const protocol = req.protocol;
+    const imageUrl = `${protocol}://${host}/uploads/${req.file.filename}`;
 
-    const updatedUser = await User.findByIdAndUpdate(
+    // Determine which model to use based on req.user.role
+    const Model = req.user && req.user.role === "admin" ? Admin : User;
+
+    const updatedUser = await Model.findByIdAndUpdate(
       req.user._id,
       { avatar: imageUrl },
       { new: true }
     ).select("-password");
 
+    if (!updatedUser) {
+      return res.status(404).json({ message: "User/Admin not found" });
+    }
+
     res.json({ url: imageUrl, user: updatedUser });
   } catch (error) {
-    console.error(error);
+    console.error("uploadAvatar error:", error);
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
@@ -320,8 +337,8 @@ const updateUserRole = async (req, res) => {
     const { role } = req.body;
 
     // Validate role
-    if (!role || !["user", "hr"].includes(role)) {
-      return res.status(400).json({ message: "Role must be either 'user' or 'hr'" });
+    if (!role || !["user", "hr", "trainee", "part_time", "full_time"].includes(role)) {
+      return res.status(400).json({ message: "Invalid role selected" });
     }
 
     const user = await User.findById(req.params.id);
@@ -332,6 +349,11 @@ const updateUserRole = async (req, res) => {
 
     user.role = role;
     await user.save();
+
+    // Send role update email asynchronously
+    const appUrl = process.env.APP_URL || "http://localhost:5173";
+    sendUserRoleUpdate(user.email, user.fullName, role, appUrl)
+      .catch(err => console.error("Failed to send role update email:", err));
 
     const updatedUser = await User.findById(req.params.id).select("-password");
 

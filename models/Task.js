@@ -166,6 +166,7 @@ const taskSchema = new mongoose.Schema(
       issues: [{ type: String }],
       suggestions: [{ type: String }],
       shortFeedback: { type: String, default: "" },
+      deductionJustification: { type: String, default: "" },
       evaluatedAt: { type: Date, default: null },
       model: { type: String, default: "" },
     },

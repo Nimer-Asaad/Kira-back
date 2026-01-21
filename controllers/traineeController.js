@@ -3,7 +3,7 @@ const Applicant = require("../models/Applicant");
 const Task = require("../models/Task");
 const User = require("../models/User");
 const { getJsonFromText, ensureOpenAI, MODEL } = require("../services/openaiClient");
-const { sendTraineeCredentials, sendHiringEmail } = require("../services/emailService");
+const { sendTraineeCredentials, sendHiringEmail, sendUserCredentials, sendUserRoleUpdate } = require("../services/emailService");
 const pdfParse = require("pdf-parse");
 const fs = require("fs");
 const path = require("path");
@@ -46,10 +46,10 @@ async function linkUser(req, res) {
     const appUrl = process.env.APP_URL || "http://localhost:5173";
     const emailResult = await sendTraineeCredentials(email, fullName, tempPassword, appUrl);
 
-    res.json({ 
-      message: "Linked", 
-      userId: user._id, 
-      email, 
+    res.json({
+      message: "Linked",
+      userId: user._id,
+      email,
       tempPassword,
       emailSent: emailResult.success,
       emailMessage: emailResult.success ? "Credentials sent to email" : `Email failed: ${emailResult.error}`
@@ -388,7 +388,7 @@ function sanitizeGeneratedTasks(tasks) {
   for (const t of list) {
     // normalize difficulty
     const d = (t.difficulty || 'medium').toLowerCase();
-    t.difficulty = ['easy','medium','hard'].includes(d) ? d : 'medium';
+    t.difficulty = ['easy', 'medium', 'hard'].includes(d) ? d : 'medium';
 
     // normalize maxPoints
     let mp = Number(t.maxPoints);
@@ -509,7 +509,7 @@ async function generateTasks(req, res) {
         ownerType: "trainee",
         ownerId: trainee._id,
         requirements: Array.isArray(t.requirements) ? t.requirements : [],
-        rubricItems: Array.isArray(t.rubric) ? t.rubric.map((r) => ({ criterion: r.criterion, maxPoints: Number(r.maxPoints)||0, keywords: Array.isArray(r.keywords)?r.keywords:[] })) : [],
+        rubricItems: Array.isArray(t.rubric) ? t.rubric.map((r) => ({ criterion: r.criterion, maxPoints: Number(r.maxPoints) || 0, keywords: Array.isArray(r.keywords) ? r.keywords : [] })) : [],
         maxPoints,
         earnedPoints: 0,
         source: mode,
@@ -650,9 +650,9 @@ async function saveHrEvaluation(req, res) {
     const ai = ensureOpenAI();
     if (ai) {
       try {
-        const submittedTasks = await Task.find({ 
-          type: "training", 
-          ownerType: "trainee", 
+        const submittedTasks = await Task.find({
+          type: "training",
+          ownerType: "trainee",
           ownerId: trainee._id,
           status: "submitted"
         });
@@ -663,7 +663,7 @@ async function saveHrEvaluation(req, res) {
               // Evaluate with AI
               const aiEval = await evaluateTrainingTaskSubmission(task.toObject(), task.submission);
               task.aiEvaluation = aiEval;
-              
+
               // Compute timing bonuses/penalties
               function computePointsWithTiming(basePoints, dueAt, submittedAt) {
                 if (!dueAt || !submittedAt) {
@@ -688,7 +688,7 @@ async function saveHrEvaluation(req, res) {
                 earned = Math.max(0, earned);
                 return { earned, basePoints, earlyBonus, lateMinutes, latePenalty };
               }
-              
+
               const timing = computePointsWithTiming(aiEval.score, task.dueAt, task.submission?.submittedAt);
               task.earnedPoints = timing.earned;
               task.status = "reviewed";
@@ -747,11 +747,11 @@ async function promoteTrainee(req, res) {
   try {
     const { traineeId } = req.params;
     const { employmentType } = req.body; // 'full_time' or 'part_time'
-    
+
     if (!traineeId) {
       return res.status(400).json({ message: "Trainee ID is required" });
     }
-    
+
     const trainee = await Trainee.findById(traineeId).populate("applicantId");
     if (!trainee) return res.status(404).json({ message: "Trainee not found" });
     if (!trainee.applicantId) return res.status(400).json({ message: "Trainee has no applicant info" });
@@ -771,24 +771,24 @@ async function promoteTrainee(req, res) {
 
     // create or update a User
     let user = null;
-    
+
     try {
       if (trainee.userId) {
         // Update existing user - preserve existing data but update role
         user = await User.findByIdAndUpdate(trainee.userId, { role: newRole }, { new: true });
       }
-      
+
       if (!user) {
         // try existing user by email
         user = await User.findOne({ email: trainee.applicantId.email });
         if (user) {
           user.role = newRole;
-          
+
           // Update user profile with applicant data if not already set
           if (!user.position && trainee.applicantId.position) {
             user.position = trainee.applicantId.position;
           }
-          
+
           // Map position to specialization
           if (!user.specialization || user.specialization === "General") {
             const position = trainee.applicantId.position || trainee.position;
@@ -809,7 +809,7 @@ async function promoteTrainee(req, res) {
               }
             }
           }
-          
+
           // Extract skills from AI summary if available
           if (trainee.applicantId.aiSummary && trainee.applicantId.aiSummary.skills) {
             if (Array.isArray(trainee.applicantId.aiSummary.skills) && (!user.skills || user.skills.length === 0)) {
@@ -821,15 +821,15 @@ async function promoteTrainee(req, res) {
               });
             }
           }
-          
+
           await user.save();
         } else {
           // create a new enabled employee user with random password
           const randomPass = Math.random().toString(36).slice(2) + Math.random().toString(36).toUpperCase().slice(2);
-          
+
           const position = trainee.applicantId.position || trainee.position || "";
           let specialization = "General";
-          
+
           if (position) {
             const posLower = position.toLowerCase();
             if (posLower.includes("frontend") || posLower.includes("react") || posLower.includes("vue")) {
@@ -846,7 +846,7 @@ async function promoteTrainee(req, res) {
               specialization = "UI/UX";
             }
           }
-          
+
           let skills = [];
           if (trainee.applicantId.aiSummary && trainee.applicantId.aiSummary.skills && Array.isArray(trainee.applicantId.aiSummary.skills)) {
             skills = trainee.applicantId.aiSummary.skills.slice(0, 10).map((skill) => {
@@ -856,7 +856,7 @@ async function promoteTrainee(req, res) {
               };
             });
           }
-          
+
           user = await User.create({
             fullName: trainee.applicantId.fullName,
             email: trainee.applicantId.email,
@@ -866,9 +866,11 @@ async function promoteTrainee(req, res) {
             specialization: specialization,
             skills: skills
           });
+          user.wasNew = true;
+          user.rawPassword = randomPass;
         }
       }
-      
+
       // link back to trainee
       if (user && !trainee.userId) {
         await Trainee.findByIdAndUpdate(trainee._id, { userId: user._id });
@@ -881,6 +883,16 @@ async function promoteTrainee(req, res) {
     // Update trainee status
     await Trainee.findByIdAndUpdate(trainee._id, { status: "promoted", hrDecision: "promoted", promotedAt: new Date() });
     await Applicant.findByIdAndUpdate(trainee.applicantId._id, { stage: "Hired" });
+
+    // Send notification email
+    const appUrl = process.env.APP_URL || "http://localhost:5173";
+    if (user && user.wasNew) {
+      sendUserCredentials(user.email, user.fullName, user.rawPassword, newRole, appUrl)
+        .catch(err => console.error("Failed to send promotion credentials email:", err));
+    } else if (user) {
+      sendUserRoleUpdate(user.email, user.fullName, newRole, appUrl)
+        .catch(err => console.error("Failed to send promotion role update email:", err));
+    }
 
     res.json({ message: "Trainee promoted", traineeId: trainee._id, userId: user?._id, role: newRole });
   } catch (err) {
@@ -989,7 +1001,12 @@ async function hrRescoreTask(req, res) {
     let aiFeedback = "";
     let aiChecks = [];
     try {
-      const systemPrompt = `You are a strict code evaluator. Return STRICT JSON ONLY with keys: {"score": number(0..${aiScore}), "feedback": string, "checks": [{"name": string, "pass": boolean, "details": string}]}. Assess submission against the task description and best practices.`;
+      const systemPrompt = `You are a strict but fair code evaluator. Return STRICT JSON ONLY with keys: {
+        "score": number(0..${aiScore}), 
+        "feedback": string, 
+        "deductionJustification": string,
+        "checks": [{"name": string, "pass": boolean, "details": string}]
+      }. Assess submission against the task description and best practices. In "deductionJustification", explain EXACTLY why points were lost (if any). Be technical and specific.`;
       const userText = `Task: ${task.title}\nDescription: ${task.description}\nRubric: ${task.rubric || ""}\nRepoURL: ${repoUrl}\nCodeSnippet:\n${(code || "").slice(0, 12000)}`;
       const raw = await getJsonFromText(systemPrompt, userText);
       const parsed = typeof raw === "object" ? raw : JSON.parse(raw);
@@ -1036,7 +1053,15 @@ async function hrRescoreTask(req, res) {
       {
         earnedPoints: earned,
         scoringBreakdown,
-        evaluationNotes: JSON.stringify({ repoUrl, notes, aiFeedback, aiChecks, aiScore, rescoredBy: "HR" }),
+        evaluationNotes: JSON.stringify({
+          repoUrl,
+          notes,
+          aiFeedback,
+          aiChecks,
+          aiScore,
+          deductionJustification: parsed?.deductionJustification || "",
+          rescoredBy: "HR"
+        }),
       },
       { new: true }
     );

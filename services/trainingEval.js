@@ -16,7 +16,8 @@ async function evaluateTrainingTaskSubmission(task, submission) {
 
   const rubricItems = Array.isArray(task.rubricItems) ? task.rubricItems : [];
   const maxScore = rubricItems.reduce((sum, r) => sum + (Number(r.maxPoints) || 0), 0) || (Number(task.maxPoints) || 0);
-  const systemPrompt = `You are a fair and expert code reviewer for training tasks. Return STRICT JSON ONLY in the following shape:\n{
+  const systemPrompt = `You are a fair and expert code reviewer for training tasks. Return STRICT JSON ONLY in the following shape:
+{
     "score": number,
     "maxScore": number,
     "percent": number,
@@ -27,11 +28,24 @@ async function evaluateTrainingTaskSubmission(task, submission) {
     "strengths": [string],
     "issues": [string],
     "suggestions": [string],
-    "shortFeedback": string
-  }\nCRITICAL RULES:\n- Give PARTIAL CREDIT generously: if a criterion is partially met, award proportional points (e.g., 50% complete = 50% of maxPoints).\n- The total "score" MUST equal the sum of all breakdown item "score" values.\n- Award points for effort, code structure, and meeting requirements even if not perfect.\n- Case-insensitive matching: "React" = "react" = "REACT".\n- If keywords are provided in rubric, award points if they appear (case-insensitive).\n- Do NOT hallucinate execution; grade based on repo URL text and provided snippet only.\n- If submission shows clear understanding and effort, award at least 60-70% of points.\n- Only give very low scores (0-30%) if submission is clearly insufficient or missing critical components.\n- Keep reasoning concise but specific.\n- Do not include anything outside of JSON.`;
+    "shortFeedback": string,
+    "deductionJustification": string
+  }
+CRITICAL RULES:
+- Give PARTIAL CREDIT generously: if a criterion is partially met, award proportional points (e.g., 50% complete = 50% of maxPoints).
+- The total "score" MUST equal the sum of all breakdown item "score" values.
+- Award points for effort, code structure, and meeting requirements even if not perfect.
+- "deductionJustification": This MUST be a highly detailed, technical, and specific explanation of WHY points were deducted if the score is less than maxScore. If points were lost, use a numbered list or clear sentences identifying exactly which technical requirements were missing or which code quality standards were violated. Explain what the trainee should have done to get full marks.
+- Case-insensitive matching: "React" = "react" = "REACT".
+- If keywords are provided in rubric, award points if they appear (case-insensitive).
+- Do NOT hallucinate execution; grade based on repo URL text and provided snippet only.
+- If submission shows clear understanding and effort, award at least 60-70% of points.
+- Only give very low scores (0-30%) if submission is clearly insufficient or missing critical components.
+- Keep reasoning concise but specific.
+- Do not include anything outside of JSON.`;
 
   const requirementsText = (Array.isArray(task.requirements) ? task.requirements : []).map((r, i) => `- ${r}`).join("\n");
-  const rubricText = rubricItems.map((r, i) => `${i+1}. ${r.criterion} (max ${r.maxPoints})${Array.isArray(r.keywords)&&r.keywords.length?` keywords: ${r.keywords.join(', ')}`:''}`).join("\n");
+  const rubricText = rubricItems.map((r, i) => `${i + 1}. ${r.criterion} (max ${r.maxPoints})${Array.isArray(r.keywords) && r.keywords.length ? ` keywords: ${r.keywords.join(', ')}` : ''}`).join("\n");
   const userText = `Task: ${task.title}\nDescription: ${task.description || ''}\nRequirements:\n${requirementsText}\nRubric:\n${rubricText}\n\nSubmission:\nRepoURL: ${submission.repoUrl || ''}\nNotes: ${(submission.notes || '').slice(0, 2000)}\nCodeSnippet:\n${(submission.codeSnippet || '').slice(0, 12000)}`;
 
   let raw = await getJsonFromText(systemPrompt, userText);
@@ -56,16 +70,16 @@ async function evaluateTrainingTaskSubmission(task, submission) {
   // Validate and fix breakdown scores
   let breakdown = Array.isArray(parsed.breakdown) ? parsed.breakdown : [];
   let breakdownSum = 0;
-  
+
   // Ensure breakdown items match rubric items and calculate sum
   if (breakdown.length > 0 && rubricItems.length > 0) {
     // Match breakdown items to rubric items by criterion name (case-insensitive)
     const matchedBreakdown = rubricItems.map((rubricItem) => {
       const breakdownItem = breakdown.find(
         (b) => b.criterion && rubricItem.criterion &&
-        b.criterion.toLowerCase().trim() === rubricItem.criterion.toLowerCase().trim()
+          b.criterion.toLowerCase().trim() === rubricItem.criterion.toLowerCase().trim()
       );
-      
+
       if (breakdownItem) {
         const itemScore = Math.max(0, Math.min(rubricItem.maxPoints, Number(breakdownItem.score || 0)));
         breakdownSum += itemScore;
@@ -98,7 +112,7 @@ async function evaluateTrainingTaskSubmission(task, submission) {
 
   // Use breakdown sum if it's valid, otherwise use parsed score
   let finalScore = breakdownSum > 0 ? breakdownSum : Math.max(0, Math.min(maxScore, Number(parsed.score || 0)));
-  
+
   // Ensure score doesn't exceed maxScore
   finalScore = Math.max(0, Math.min(maxScore, finalScore));
   const percent = maxScore > 0 ? Math.round((finalScore / maxScore) * 100) : 0;
@@ -113,6 +127,7 @@ async function evaluateTrainingTaskSubmission(task, submission) {
     issues: Array.isArray(parsed.issues) ? parsed.issues : [],
     suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
     shortFeedback: (parsed.shortFeedback || "").toString(),
+    deductionJustification: (parsed.deductionJustification || "").toString(),
     evaluatedAt: new Date(),
     model: MODEL,
   };
