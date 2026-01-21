@@ -26,6 +26,13 @@ class DBManager {
     return await Email.find(query).sort({ date: -1 });
   }
 
+  async findEmailsPaginated(query, sort = { internalDate: -1, date: -1, _id: -1 }, skip = 0, limit = 20) {
+    return await Email.find(query)
+      .sort(sort)
+      .skip(skip)
+      .limit(limit);
+  }
+
   async countEmails(query) {
     return await Email.countDocuments(query);
   }

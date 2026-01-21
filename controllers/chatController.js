@@ -107,8 +107,19 @@ exports.getConversations = async (req, res) => {
     const conversationsMap = new Map();
 
     messages.forEach((msg) => {
+      // Skip messages where sender or receiver is null (deleted users)
+      if (!msg.sender || !msg.receiver) {
+        return;
+      }
+
       const isReceiver = msg.receiver._id.toString() === currentUserId.toString();
       const partner = isReceiver ? msg.sender : msg.receiver;
+      
+      // Double check partner exists
+      if (!partner || !partner._id) {
+        return;
+      }
+      
       const partnerId = partner._id.toString();
 
       if (!conversationsMap.has(partnerId)) {

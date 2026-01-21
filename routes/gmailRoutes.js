@@ -50,6 +50,12 @@ router.get('/auth', async (req, res) => {
 
     const oAuth2Client = gmailService.createOAuth2Client();
 
+    // Support redirect param in state
+    const stateObj = {
+      userId: String(userId),
+      redirect: req.query.redirect || null,
+    };
+
     const url = oAuth2Client.generateAuthUrl({
       access_type: 'offline',
       prompt: 'consent',
@@ -58,7 +64,7 @@ router.get('/auth', async (req, res) => {
         'https://www.googleapis.com/auth/userinfo.email',
         'https://www.googleapis.com/auth/userinfo.profile',
       ],
-      state: String(userId),
+      state: JSON.stringify(stateObj),
     });
 
     res.redirect(url);
@@ -77,7 +83,21 @@ const handleOAuthCallback = async (req, res) => {
       return res.status(400).send('Missing code or state');
     }
 
-    const userId = state;
+    let userId;
+    let redirectPath = '/hr/inbox';
+
+    try {
+      // Try parsing state as JSON
+      const parsedState = JSON.parse(state);
+      userId = parsedState.userId;
+      if (parsedState.redirect === 'personal') {
+        redirectPath = '/personal/inbox';
+      }
+    } catch (e) {
+      // Fallback: state is just userId
+      userId = state;
+    }
+
     const oAuth2Client = gmailService.createOAuth2Client();
 
     const { tokens } = await oAuth2Client.getToken(code);
@@ -88,7 +108,7 @@ const handleOAuthCallback = async (req, res) => {
     });
 
     const redirectUrl = process.env.CLIENT_URL || 'http://localhost:5173';
-    res.redirect(`${redirectUrl}/hr/inbox?gmail=connected`);
+    res.redirect(`${redirectUrl}${redirectPath}?gmail=connected`);
   } catch (err) {
     console.error('Gmail callback error:', err);
     res.status(500).send('Failed to complete Google OAuth');
@@ -104,7 +124,7 @@ router.get('/callback', handleOAuthCallback)
 // ===== Authenticated Routes =====
 
 // 3) Get Gmail profile
-router.get('/profile', protect, hrOrAdmin, async (req, res) => {
+router.get('/profile', protect, async (req, res) => {
   try {
     const oAuth2Client = await gmailService.getOAuth2ClientForUser(req.user.id);
 
@@ -138,14 +158,14 @@ router.get('/profile', protect, hrOrAdmin, async (req, res) => {
 });
 
 // 4) Get sync state
-router.get('/sync/state', protect, hrOrAdmin, async (req, res) => {
+router.get('/sync/state', protect, async (req, res) => {
   const scope = (req.query.scope || 'inbox').toString();
   const state = await dbManager.getSyncState(req.user.id, scope);
   res.json(state || {});
 });
 
 // 5) Reset sync state
-router.post('/sync/reset', protect, hrOrAdmin, async (req, res) => {
+router.post('/sync/reset', protect, async (req, res) => {
   try {
     const scope = (req.query.scope || req.body?.scope || 'inbox').toString();
     const labelIds = req.body?.labelIds || ['INBOX'];
@@ -174,7 +194,7 @@ router.post('/sync/reset', protect, hrOrAdmin, async (req, res) => {
 });
 
 // 6) Paginated sync: fetch one page, store locally
-router.post('/sync-page', protect, hrOrAdmin, async (req, res) => {
+router.post('/sync-page', protect, async (req, res) => {
   try {
     const { limit = 100, pageToken, labelIds, q, scope, startDate, endDate } = req.body;
     const gmail = await gmailService.getGmailClientForUser(req.user.id);
@@ -339,7 +359,7 @@ router.post('/sync-page', protect, hrOrAdmin, async (req, res) => {
 });
 
 // 7) Local search
-router.get('/local/search', protect, hrOrAdmin, async (req, res) => {
+router.get('/local/search', protect, async (req, res) => {
   try {
     const { from, keyword, hasAttachments, startDate, endDate, tag, labelId, labelIds, limit = 20, skip = 0 } = req.query;
 
@@ -374,9 +394,9 @@ router.get('/local/search', protect, hrOrAdmin, async (req, res) => {
     const labelsFilter = (typeof labelId === 'string' && labelId.trim() ? [labelId.trim()] : []).concat(
       typeof labelIds === 'string'
         ? labelIds
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean)
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
         : []
     );
     if (labelsFilter.length) {
@@ -384,24 +404,21 @@ router.get('/local/search', protect, hrOrAdmin, async (req, res) => {
     }
 
     const totalCount = await dbManager.countEmails(query);
-    const emails = await dbManager.findEmails(query);
 
-    // Sort by date descending (newest first) then by priority
-    const filtered = emails
-      .sort((a, b) => {
-        // Primary sort: by date descending (newest first)
-        const dateDiff = new Date(b.date) - new Date(a.date);
-        if (dateDiff !== 0) return dateDiff;
-        
-        // Secondary sort: by Gmail priority
-        const priorityDiff = (b.gmailPriority || 0) - (a.gmailPriority || 0);
-        if (priorityDiff !== 0) return priorityDiff;
+    // Sort by internalDate desc (Gmail accurate time), then date desc, then _id for stability
+    const sort = { internalDate: -1, date: -1, _id: -1 };
 
-        const importanceOrder = { high: 3, normal: 2, low: 1 };
-        const importanceDiff = (importanceOrder[b.gmailImportance] || 2) - (importanceOrder[a.gmailImportance] || 2);
-        return importanceDiff;
-      })
-      .slice(Number(skip), Number(skip) + Math.min(Number(limit), 100));
+    // FETCH DB SORTED & PAGINATED directly
+    // This fixes the issue where latest emails might be missed or misordered by in-memory sort of partial data
+    const emails = await dbManager.findEmailsPaginated(
+      query,
+      sort,
+      Number(skip),
+      Number(limit) // Use backend limit directly
+    );
+
+    // No need to re-sort or slice in memory
+    const filtered = emails;
 
     res.json({ emails: filtered, count: totalCount });
   } catch (err) {
